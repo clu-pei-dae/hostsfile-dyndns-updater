@@ -27,7 +27,20 @@ FritzBox --HTTPS GET /update?...--> nginx (TLS, rate limit) --unix socket--> bac
 | Abuse | nginx `limit_req` (6 requests/min per source, burst 5), optional `allow`/`deny` by source network, optional `require_source_match` (announced address must equal the connecting address), method and size limits. |
 | Blast radius | The backend runs under a hardened systemd unit (no new privileges, `ProtectSystem=strict` with only `/etc` writable, syscall filter, only `AF_UNIX`, only `CAP_CHOWN`). |
 
-## Installation (Ubuntu 22.04 / 24.04)
+## Installation (Ubuntu 22.04 / 24.04 / 26.04)
+
+One command, using the latest GitHub release:
+
+```sh
+curl -fsSLo /tmp/hostsfile-dyndns-updater.deb \
+  https://github.com/clu-pei-dae/hostsfile-dyndns-updater/releases/latest/download/hostsfile-dyndns-updater_all.deb \
+  && sudo apt install /tmp/hostsfile-dyndns-updater.deb
+```
+
+Releases ship a `SHA256SUMS` file. Every release is installed and exercised
+(nginx + backend, purge) on all three Ubuntu versions by CI before it is published.
+
+Build it yourself instead:
 
 ```sh
 make deb                                  # or: packaging/build-deb.sh
@@ -107,6 +120,13 @@ Responses follow DynDNS conventions: `good <ip>` (changed), `nochg <ip>`
   new line is appended. Otherwise a line marked
   `# managed by hostsfile-dyndns-updater` is appended.
 * Unchanged addresses do not rewrite the file. `::` (no IPv6) is ignored.
+
+## Releasing
+
+Bump `__version__`, commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The
+`Build and release .deb` workflow builds the package, runs the install test on
+Ubuntu 22.04, 24.04 and 26.04, and publishes a GitHub release. Pushes to `main`
+and pull requests build and test without releasing.
 
 ## Development
 

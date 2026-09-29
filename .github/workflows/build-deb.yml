@@ -1,0 +1,68 @@
+name: Build and release .deb
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check tag matches package version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          version=$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/hostsfile_dyndns_updater/__init__.py)
+          [ "v$version" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME != version v$version" >&2; exit 1; }
+      - run: make test
+      - run: make deb
+      - uses: actions/upload-artifact@v4
+        with:
+          name: deb
+          path: dist/*.deb
+          if-no-files-found: error
+
+  install-test:
+    needs: build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        ubuntu: ["22.04", "24.04", "26.04"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: deb
+          path: dist
+      - name: Install and exercise the package on Ubuntu ${{ matrix.ubuntu }}
+        run: |
+          docker run --rm -v "$PWD:/w" -w /w "ubuntu:${{ matrix.ubuntu }}" \
+            sh -c 'tests/install-test.sh /w/dist/hostsfile-dyndns-updater_*_all.deb'
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: install-test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: deb
+          path: dist
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Fixed name so that releases/latest/download/... is a stable URL.
+          cp dist/hostsfile-dyndns-updater_*_all.deb dist/hostsfile-dyndns-updater_all.deb
+          (cd dist && sha256sum *.deb > SHA256SUMS)
+          gh release create "$GITHUB_REF_NAME" dist/*.deb dist/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes

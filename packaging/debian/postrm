@@ -2,6 +2,7 @@
 set -e
 case "$1" in
     remove|purge)
+        rm -rf /usr/lib/python3/dist-packages/hostsfile_dyndns_updater/__pycache__
         rm -f /etc/nginx/sites-enabled/hostsfile-dyndns-updater
         if [ -d /run/systemd/system ]; then
             systemctl daemon-reload || true

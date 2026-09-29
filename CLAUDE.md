@@ -20,6 +20,9 @@ Ansible role. See `README.md` for the user-facing description.
 
 - `make test` — must pass before every commit.
 - `make lint` — shellcheck + Ansible syntax check.
+- `tests/install-test.sh <deb>` — installs the package as root on a clean Ubuntu and
+  runs nginx + backend end to end (CI runs it in 22.04/24.04/26.04 containers;
+  don't run it on a machine you care about).
 - `make deb` — build the package into `dist/` (git-ignored).
 
 ## Rules
@@ -36,6 +39,9 @@ Ansible role. See `README.md` for the user-facing description.
   only with a documented reason. The service must still work with `ProtectSystem=strict`.
 - Conffiles must be listed in `packaging/debian/conffiles`; maintainer scripts must
   stay idempotent and pass `shellcheck`.
+- Releases are tags `vX.Y.Z` matching `__version__`; `.github/workflows/build-deb.yml`
+  builds, install-tests and publishes them. The asset name
+  `hostsfile-dyndns-updater_all.deb` is used by the README install command — keep it.
 - Bump `__version__` in `src/hostsfile_dyndns_updater/__init__.py` for releases;
   the .deb version is derived from it.
 - Test data: use public addresses (e.g. `8.8.8.8`, `2606:4700::1`) — documentation
