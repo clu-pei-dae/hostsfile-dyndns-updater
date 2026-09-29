@@ -243,7 +243,7 @@ Responses follow DynDNS conventions: `good <ip>` (changed), `nochg <ip>`
 
 Bump `__version__` and `version` in `ansible/galaxy.yml`, commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The
 `Build and release .deb` workflow builds the package, runs the install test on
-Ubuntu 22.04, 24.04 and 26.04, and publishes a GitHub release. Pushes to `main`
+Ubuntu 22.04, 24.04 and 26.04, and publishes a GitHub release. If a release for the tag already exists (e.g. created in the web UI), the packages are attached to it instead. Pushes to `main`
 and pull requests build and test without releasing.
 
 ## Development
