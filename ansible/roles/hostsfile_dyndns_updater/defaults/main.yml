@@ -1,0 +1,32 @@
+---
+# Package: path of a .deb on the Ansible controller (e.g. built with
+# packaging/build-deb.sh). Leave empty if the package comes from an apt repository.
+hostsfile_dyndns_updater_deb_src: ""
+
+# nginx
+hostsfile_dyndns_updater_server_name: dyndns.example.org
+hostsfile_dyndns_updater_listen_port: 443
+# Certificate the FritzBox trusts (e.g. Let's Encrypt). Must already exist on the host.
+hostsfile_dyndns_updater_tls_certificate: /etc/ssl/certs/ssl-cert-snakeoil.pem
+hostsfile_dyndns_updater_tls_certificate_key: /etc/ssl/private/ssl-cert-snakeoil.key
+# Optional source restriction, e.g. ["203.0.113.0/24"]. Empty = allow all.
+hostsfile_dyndns_updater_nginx_allow: []
+hostsfile_dyndns_updater_rate_limit: 6r/m
+hostsfile_dyndns_updater_rate_burst: 5
+
+# backend ([server] section of config.ini)
+hostsfile_dyndns_updater_socket_group: www-data
+hostsfile_dyndns_updater_hosts_file: /etc/hosts
+hostsfile_dyndns_updater_allow_private_addresses: false
+hostsfile_dyndns_updater_require_source_match: false
+hostsfile_dyndns_updater_allow_query_credentials: false
+
+# Hostnames to maintain. Required. Create hashes with
+#   hostsfile-dyndns-updater hash-password
+# and keep them in Ansible Vault.
+# hostsfile_dyndns_updater_hosts:
+#   - name: home
+#     hostname: home.example.org
+#     username: fritzbox
+#     password_hash: "pbkdf2_sha256$600000$..."
+hostsfile_dyndns_updater_hosts: []

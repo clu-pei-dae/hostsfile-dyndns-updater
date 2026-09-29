@@ -1,0 +1,27 @@
+#!/bin/sh
+set -e
+
+if [ "$1" = configure ]; then
+    chmod 0600 /etc/hostsfile-dyndns-updater/config.ini
+    chmod 0700 /etc/hostsfile-dyndns-updater
+
+    site=/etc/nginx/sites-enabled/hostsfile-dyndns-updater
+    if [ -d /etc/nginx/sites-enabled ] && [ ! -e "$site" ] && [ -z "$2" ]; then
+        ln -s ../sites-available/hostsfile-dyndns-updater "$site"
+    fi
+
+    if [ -d /run/systemd/system ]; then
+        systemctl daemon-reload || true
+        systemctl enable hostsfile-dyndns-updater.service || true
+        # Only start once at least one host is configured.
+        if hostsfile-dyndns-updater check-config >/dev/null 2>&1; then
+            systemctl restart hostsfile-dyndns-updater.service || true
+        else
+            echo "hostsfile-dyndns-updater: not started, configure /etc/hostsfile-dyndns-updater/config.ini first." >&2
+        fi
+        if systemctl is-active --quiet nginx && nginx -t >/dev/null 2>&1; then
+            systemctl reload nginx || true
+        fi
+    fi
+fi
+exit 0

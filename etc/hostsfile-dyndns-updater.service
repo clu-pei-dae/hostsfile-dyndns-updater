@@ -1,0 +1,41 @@
+[Unit]
+Description=DynDNS update endpoint backend (writes /etc/hosts)
+Documentation=https://github.com/clu-pei-dae/hostsfile-dyndns-updater
+After=network.target
+Before=nginx.service
+
+[Service]
+Type=simple
+ExecStartPre=/usr/bin/hostsfile-dyndns-updater check-config
+ExecStart=/usr/bin/hostsfile-dyndns-updater serve
+Restart=on-failure
+RestartSec=5
+RuntimeDirectory=hostsfile-dyndns-updater
+RuntimeDirectoryMode=0755
+
+# Runs as root (needed to replace /etc/hosts) but with everything else locked down.
+CapabilityBoundingSet=CAP_CHOWN
+NoNewPrivileges=yes
+ProtectSystem=strict
+ReadWritePaths=/etc
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

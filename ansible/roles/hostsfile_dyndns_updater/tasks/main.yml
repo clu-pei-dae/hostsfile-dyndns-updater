@@ -1,0 +1,61 @@
+---
+- name: Validate role variables
+  ansible.builtin.assert:
+    that:
+      - hostsfile_dyndns_updater_hosts | length > 0
+      - hostsfile_dyndns_updater_hosts | map(attribute='password_hash') | select('match', '^pbkdf2_sha256[$]') | list | length == hostsfile_dyndns_updater_hosts | length
+    fail_msg: hostsfile_dyndns_updater_hosts must list at least one host and every entry needs a pbkdf2_sha256 password_hash
+
+- name: Copy package to target
+  ansible.builtin.copy:
+    src: "{{ hostsfile_dyndns_updater_deb_src }}"
+    dest: "/var/tmp/{{ hostsfile_dyndns_updater_deb_src | basename }}"
+    mode: "0644"
+  when: hostsfile_dyndns_updater_deb_src | length > 0
+
+- name: Install package from file
+  ansible.builtin.apt:
+    deb: "/var/tmp/{{ hostsfile_dyndns_updater_deb_src | basename }}"
+  when: hostsfile_dyndns_updater_deb_src | length > 0
+  notify: Restart hostsfile-dyndns-updater
+
+- name: Install package from repository
+  ansible.builtin.apt:
+    name: hostsfile-dyndns-updater
+    update_cache: true
+    cache_valid_time: 3600
+  when: hostsfile_dyndns_updater_deb_src | length == 0
+  notify: Restart hostsfile-dyndns-updater
+
+- name: Configure backend
+  ansible.builtin.template:
+    src: config.ini.j2
+    dest: /etc/hostsfile-dyndns-updater/config.ini
+    owner: root
+    group: root
+    mode: "0600"
+    validate: /usr/bin/hostsfile-dyndns-updater check-config -c %s
+  notify: Restart hostsfile-dyndns-updater
+
+- name: Configure nginx site
+  ansible.builtin.template:
+    src: nginx-site.conf.j2
+    dest: /etc/nginx/sites-available/hostsfile-dyndns-updater
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Reload nginx
+
+- name: Enable nginx site
+  ansible.builtin.file:
+    src: ../sites-available/hostsfile-dyndns-updater
+    dest: /etc/nginx/sites-enabled/hostsfile-dyndns-updater
+    state: link
+  notify: Reload nginx
+
+- name: Enable and start backend
+  ansible.builtin.systemd:
+    name: hostsfile-dyndns-updater
+    enabled: true
+    state: started
+    daemon_reload: true

@@ -1,0 +1,52 @@
+# {{ ansible_managed }}
+# Replace the snakeoil certificate with a certificate the FritzBox trusts
+# (e.g. Let's Encrypt) and adjust server_name.
+
+limit_req_zone $binary_remote_addr zone=hostsfile_dyndns:1m rate={{ hostsfile_dyndns_updater_rate_limit }};
+
+# Log the path only: the query string may carry addresses or credentials.
+log_format hostsfile_dyndns '$remote_addr [$time_local] $request_method $uri $status $body_bytes_sent';
+
+server {
+    listen {{ hostsfile_dyndns_updater_listen_port }} ssl;
+    listen [::]:{{ hostsfile_dyndns_updater_listen_port }} ssl;
+    server_name {{ hostsfile_dyndns_updater_server_name }};
+
+    ssl_certificate     {{ hostsfile_dyndns_updater_tls_certificate }};
+    ssl_certificate_key {{ hostsfile_dyndns_updater_tls_certificate_key }};
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_prefer_server_ciphers off;
+    ssl_session_tickets off;
+
+    server_tokens off;
+    add_header Strict-Transport-Security "max-age=31536000" always;
+    add_header X-Content-Type-Options nosniff always;
+    access_log /var/log/nginx/hostsfile-dyndns-updater.access.log hostsfile_dyndns;
+
+    client_max_body_size 1k;
+    large_client_header_buffers 2 4k;
+
+{% if hostsfile_dyndns_updater_nginx_allow | length > 0 %}
+{% for cidr in hostsfile_dyndns_updater_nginx_allow %}
+    allow {{ cidr }};
+{% endfor %}
+    deny all;
+{% endif %}
+
+    location = /update {
+        limit_except GET { deny all; }
+        limit_req zone=hostsfile_dyndns burst={{ hostsfile_dyndns_updater_rate_burst }} nodelay;
+        limit_req_status 429;
+
+        proxy_pass http://unix:/run/hostsfile-dyndns-updater/api.sock;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;  # overwrites any client-supplied value
+        proxy_set_header X-Forwarded-For $remote_addr;
+        proxy_read_timeout 10s;
+        proxy_redirect off;
+    }
+
+    location / {
+        return 404;
+    }
+}

@@ -1,0 +1,9 @@
+---
+- name: Restart hostsfile-dyndns-updater
+  ansible.builtin.systemd:
+    name: hostsfile-dyndns-updater
+    state: restarted
+
+- name: Reload nginx
+  ansible.builtin.shell: nginx -t && systemctl reload nginx
+  changed_when: true
