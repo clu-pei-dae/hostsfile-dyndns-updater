@@ -66,5 +66,11 @@ jobs:
           # Fixed name so that releases/latest/download/... is a stable URL.
           cp dist/hostsfile-dyndns-updater_*_all.deb dist/hostsfile-dyndns-updater_all.deb
           (cd dist && sha256sum *.deb > SHA256SUMS)
-          gh release create "$GITHUB_REF_NAME" dist/*.deb dist/SHA256SUMS \
-            --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+          # The release may already exist (e.g. created in the web UI together with the tag).
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" dist/*.deb dist/SHA256SUMS \
+              --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" dist/*.deb dist/SHA256SUMS \
+              --repo "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --generate-notes
+          fi
