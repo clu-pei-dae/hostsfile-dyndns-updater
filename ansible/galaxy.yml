@@ -1,0 +1,14 @@
+---
+namespace: clu_pei_dae
+name: hostsfile_dyndns_updater
+version: 0.1.0
+readme: ../README.md
+authors:
+  - hostsfile-dyndns-updater maintainers
+description: Ansible role for hostsfile-dyndns-updater (FritzBox DynDNS endpoint that maintains /etc/hosts)
+license:
+  - Apache-2.0
+repository: https://github.com/clu-pei-dae/hostsfile-dyndns-updater
+build_ignore:
+  - ansible.cfg
+  - inventory.example.ini

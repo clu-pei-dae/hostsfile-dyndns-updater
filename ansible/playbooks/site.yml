@@ -1,0 +1,16 @@
+---
+- name: Deploy hostsfile-dyndns-updater
+  hosts: dyndns
+  become: true
+  roles:
+    - role: hostsfile_dyndns_updater
+      vars:
+        hostsfile_dyndns_updater_server_name: dyndns.example.org
+        hostsfile_dyndns_updater_tls_certificate: /etc/letsencrypt/live/dyndns.example.org/fullchain.pem
+        hostsfile_dyndns_updater_tls_certificate_key: /etc/letsencrypt/live/dyndns.example.org/privkey.pem
+        # Put the hashes into Ansible Vault (ansible-vault encrypt_string).
+        hostsfile_dyndns_updater_hosts:
+          - name: home
+            hostname: home.example.org
+            username: fritzbox
+            password_hash: "{{ vault_home_password_hash }}"

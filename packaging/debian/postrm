@@ -1,0 +1,19 @@
+#!/bin/sh
+set -e
+case "$1" in
+    remove|purge)
+        rm -rf /usr/lib/python3/dist-packages/hostsfile_dyndns_updater/__pycache__
+        rm -f /etc/nginx/sites-enabled/hostsfile-dyndns-updater
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload || true
+            if systemctl is-active --quiet nginx && nginx -t >/dev/null 2>&1; then
+                systemctl reload nginx || true
+            fi
+        fi
+        ;;
+esac
+if [ "$1" = purge ]; then
+    rm -rf /etc/hostsfile-dyndns-updater
+    rm -f /var/log/nginx/hostsfile-dyndns-updater.access.log*
+fi
+exit 0
