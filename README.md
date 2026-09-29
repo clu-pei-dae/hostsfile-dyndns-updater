@@ -90,7 +90,9 @@ ansible-playbook -i inventory.example.ini playbooks/site.yml
 ```
 
 By default the role downloads the package from the GitHub release on the target
-host and verifies it against the release's `SHA256SUMS`. Key variables:
+host and verifies it against the release's `SHA256SUMS`. Re-running the playbook upgrades the package when a newer release (`github` with
+`latest`), a different .deb (`file`) or a newer apt version (`apt`) is available;
+otherwise nothing changes and the service is not restarted. Key variables:
 `hostsfile_dyndns_updater_install_method` (`github`, `file` or `apt`),
 `..._github_release` (`latest` or a tag like `v0.1.0`; pin it for reproducible
 deployments), `..._deb_src` (for `file`: a .deb on the controller),

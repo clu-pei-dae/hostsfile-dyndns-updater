@@ -45,6 +45,7 @@
 - name: Install package from repository
   ansible.builtin.apt:
     name: hostsfile-dyndns-updater
+    state: latest
     update_cache: true
     cache_valid_time: 3600
   when: hostsfile_dyndns_updater_install_method == 'apt'
