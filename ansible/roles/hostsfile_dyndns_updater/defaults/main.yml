@@ -1,6 +1,16 @@
 ---
-# Package: path of a .deb on the Ansible controller (e.g. built with
-# packaging/build-deb.sh). Leave empty if the package comes from an apt repository.
+# How the package is installed:
+#   github - download the .deb from a GitHub release on the target host (default)
+#   file   - copy a .deb from the Ansible controller (hostsfile_dyndns_updater_deb_src)
+#   apt    - install "hostsfile-dyndns-updater" from a configured apt repository
+hostsfile_dyndns_updater_install_method: github
+
+# github: repository and release ("latest" or a tag such as "v0.1.0"). The download is
+# verified against the release's SHA256SUMS. With "latest", each run picks up new releases.
+hostsfile_dyndns_updater_github_repo: clu-pei-dae/hostsfile-dyndns-updater
+hostsfile_dyndns_updater_github_release: latest
+
+# file: path of a .deb on the controller (e.g. built with packaging/build-deb.sh).
 hostsfile_dyndns_updater_deb_src: ""
 
 # nginx

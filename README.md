@@ -89,11 +89,14 @@ cd ansible
 ansible-playbook -i inventory.example.ini playbooks/site.yml
 ```
 
-Key variables: `hostsfile_dyndns_updater_deb_src` (path to the .deb on the
-controller; empty to install from an apt repository),
-`hostsfile_dyndns_updater_server_name`, `..._tls_certificate(_key)`,
-`..._nginx_allow`, `..._hosts` (list of `name`, `hostname`, `username`,
-`password_hash`). Keep the hashes in Ansible Vault.
+By default the role downloads the package from the GitHub release on the target
+host and verifies it against the release's `SHA256SUMS`. Key variables:
+`hostsfile_dyndns_updater_install_method` (`github`, `file` or `apt`),
+`..._github_release` (`latest` or a tag like `v0.1.0`; pin it for reproducible
+deployments), `..._deb_src` (for `file`: a .deb on the controller),
+`..._server_name`, `..._tls_certificate(_key)`, `..._nginx_allow`, `..._hosts`
+(list of `name`, `hostname`, `username`, `password_hash`). Keep the hashes in
+Ansible Vault.
 
 ## FRITZ!Box setup
 

@@ -6,17 +6,40 @@
       - hostsfile_dyndns_updater_hosts | map(attribute='password_hash') | select('match', '^pbkdf2_sha256[$]') | list | length == hostsfile_dyndns_updater_hosts | length
     fail_msg: hostsfile_dyndns_updater_hosts must list at least one host and every entry needs a pbkdf2_sha256 password_hash
 
+- name: Validate install method
+  ansible.builtin.assert:
+    that:
+      - hostsfile_dyndns_updater_install_method in ['github', 'file', 'apt']
+      - hostsfile_dyndns_updater_install_method != 'file' or hostsfile_dyndns_updater_deb_src | length > 0
+    fail_msg: install_method must be github, file or apt; "file" needs hostsfile_dyndns_updater_deb_src
+
+- name: Set GitHub release download URL
+  ansible.builtin.set_fact:
+    hostsfile_dyndns_updater_release_url: >-
+      https://github.com/{{ hostsfile_dyndns_updater_github_repo }}/releases/{{
+      'latest/download' if hostsfile_dyndns_updater_github_release == 'latest'
+      else 'download/' ~ hostsfile_dyndns_updater_github_release }}
+  when: hostsfile_dyndns_updater_install_method == 'github'
+
+- name: Download package from GitHub release
+  ansible.builtin.get_url:
+    url: "{{ hostsfile_dyndns_updater_release_url }}/hostsfile-dyndns-updater_all.deb"
+    checksum: "sha256:{{ hostsfile_dyndns_updater_release_url }}/SHA256SUMS"
+    dest: /var/tmp/hostsfile-dyndns-updater_all.deb
+    mode: "0644"
+  when: hostsfile_dyndns_updater_install_method == 'github'
+
 - name: Copy package to target
   ansible.builtin.copy:
     src: "{{ hostsfile_dyndns_updater_deb_src }}"
-    dest: "/var/tmp/{{ hostsfile_dyndns_updater_deb_src | basename }}"
+    dest: /var/tmp/hostsfile-dyndns-updater_all.deb
     mode: "0644"
-  when: hostsfile_dyndns_updater_deb_src | length > 0
+  when: hostsfile_dyndns_updater_install_method == 'file'
 
 - name: Install package from file
   ansible.builtin.apt:
-    deb: "/var/tmp/{{ hostsfile_dyndns_updater_deb_src | basename }}"
-  when: hostsfile_dyndns_updater_deb_src | length > 0
+    deb: /var/tmp/hostsfile-dyndns-updater_all.deb
+  when: hostsfile_dyndns_updater_install_method in ['github', 'file']
   notify: Restart hostsfile-dyndns-updater
 
 - name: Install package from repository
@@ -24,7 +47,7 @@
     name: hostsfile-dyndns-updater
     update_cache: true
     cache_valid_time: 3600
-  when: hostsfile_dyndns_updater_deb_src | length == 0
+  when: hostsfile_dyndns_updater_install_method == 'apt'
   notify: Restart hostsfile-dyndns-updater
 
 - name: Configure backend
