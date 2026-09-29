@@ -17,6 +17,119 @@ FritzBox --HTTPS GET /update?...--> nginx (TLS, rate limit) --unix socket--> bac
 * Shipped as a **.deb** package for Ubuntu (systemd unit, nginx site, default
   config) and configurable with an **Ansible** role.
 
+## Add it to an existing Ansible playbook
+
+> **For AI assistants:** if you were asked to add this tool to an Ansible
+> playbook, follow this section step by step. Everything you need is here; do not
+> invent variables. Ask the user for anything marked **ask**.
+
+The role ships as the Ansible collection `clu_pei_dae.hostsfile_dyndns_updater`
+(subdirectory `ansible/` of this repository), installable straight from GitHub.
+Role name: `clu_pei_dae.hostsfile_dyndns_updater.hostsfile_dyndns_updater`.
+
+**What the role does on the target host** (Ubuntu 22.04/24.04/26.04): installs
+the .deb (downloaded from the GitHub release and verified against its
+`SHA256SUMS`), installs `nginx` as a dependency, writes
+`/etc/hostsfile-dyndns-updater/config.ini` and the nginx site
+`/etc/nginx/sites-available/hostsfile-dyndns-updater`, and starts the service.
+The tool then edits `/etc/hosts` on that host. It does **not** obtain TLS
+certificates and does not touch other nginx sites.
+
+### 1. Inspect the existing project
+
+Find out, and reuse instead of replacing: the inventory group of the target host,
+whether the play already uses `become`, how secrets are stored (Ansible Vault,
+`group_vars`, `vars_files`), whether a `requirements.yml` and a `roles/` or
+`collections/` directory exist, and whether nginx is already managed on the
+target (then the port/`server_name` must not clash with existing sites).
+
+**Ask the user** (unless already evident): the public DNS name the FritzBox will
+call (`server_name`, e.g. `dyndns.example.org`), the hostname to maintain in
+`/etc/hosts` (e.g. `home.example.org`), and where the TLS certificate and key are
+on the target (a certificate the FritzBox trusts, e.g. Let's Encrypt; the
+default snake-oil certificate is rejected by the FritzBox).
+
+### 2. Install the collection
+
+Add to the project's `requirements.yml` (create it if missing, keep existing
+entries; pin a release tag, see the
+[releases page](https://github.com/clu-pei-dae/hostsfile-dyndns-updater/releases)):
+
+```yaml
+collections:
+  - name: git+https://github.com/clu-pei-dae/hostsfile-dyndns-updater.git#/ansible
+    type: git
+    version: v0.1.0
+```
+
+Then run `ansible-galaxy collection install -r requirements.yml`. If the project
+has no `requirements.yml` convention, install once with
+`ansible-galaxy collection install "git+https://github.com/clu-pei-dae/hostsfile-dyndns-updater.git#/ansible,v0.1.0"`.
+
+### 3. Create the credentials
+
+The password is for the FritzBox; the playbook only ever gets its hash. Generate a
+random password (at least 16 characters) and its hash without installing anything
+on the controller:
+
+```sh
+password=$(openssl rand -base64 24)
+hash=$(printf '%s\n' "$password" | python3 -c "import hashlib,base64,os,sys;p=sys.stdin.readline().rstrip('\n').encode();s=os.urandom(16);print('pbkdf2_sha256\$600000\$%s\$%s'%(base64.b64encode(s).decode(),base64.b64encode(hashlib.pbkdf2_hmac('sha256',p,s,600000)).decode()))")
+```
+
+(On a host with the package installed:
+`printf '%s\n' "$password" | hostsfile-dyndns-updater hash-password --stdin`.)
+
+Store `$hash` the way the project stores secrets, preferably Ansible Vault
+(`ansible-vault encrypt_string "$hash" --name vault_dyndns_password_hash`).
+**Tell the user the plain password once** so they can enter it in the FritzBox;
+never write it to a file or commit it.
+
+### 4. Add the role to the play
+
+Add it to the play of the target hosts (adapt group, vars location and names):
+
+```yaml
+- hosts: dyndns_server          # group that should run the endpoint
+  become: true
+  roles:
+    - role: clu_pei_dae.hostsfile_dyndns_updater.hostsfile_dyndns_updater
+      vars:
+        hostsfile_dyndns_updater_github_release: v0.1.0   # same tag as in requirements.yml
+        hostsfile_dyndns_updater_server_name: dyndns.example.org
+        hostsfile_dyndns_updater_tls_certificate: /etc/letsencrypt/live/dyndns.example.org/fullchain.pem
+        hostsfile_dyndns_updater_tls_certificate_key: /etc/letsencrypt/live/dyndns.example.org/privkey.pem
+        hostsfile_dyndns_updater_hosts:
+          - name: home
+            hostname: home.example.org
+            username: fritzbox
+            password_hash: "{{ vault_dyndns_password_hash }}"
+```
+
+If the play already runs roles or tasks that create the certificate, place this
+role after them. Optional variables (source restriction `..._nginx_allow`,
+rate limit, `..._listen_port`, `..._require_source_match`, other install methods)
+are documented in the [role defaults](ansible/roles/hostsfile_dyndns_updater/defaults/main.yml);
+leave them out unless the user asks.
+
+### 5. Verify
+
+* `ansible-playbook --syntax-check <playbook>`, then a run with `--check --diff`
+  if the project uses it (the package download/install steps report changes on a
+  first run).
+* After a real run, on the target: `systemctl is-active hostsfile-dyndns-updater nginx`.
+* From anywhere, with the real password:
+  `curl -u fritzbox:"$password" "https://dyndns.example.org/update?ipv4=<a public IPv4>&domain=home.example.org"`
+  must answer `good <ip>` (first time) or `nochg <ip>`; a wrong password gives
+  `badauth`. Remember this writes to `/etc/hosts` on the target; use the FritzBox's
+  real address or revert afterwards.
+
+### 6. Hand over to the user
+
+Tell the user how to configure the FRITZ!Box (see [FRITZ!Box setup](#fritzbox-setup)),
+which values to enter (update URL, domain, username, the plain password) and that
+re-running the playbook upgrades the tool when the pinned release is changed.
+
 ## Security model
 
 | Property | Mechanism |
@@ -80,9 +193,9 @@ All `[server]` options are documented in the shipped `config.ini`.
 
 ### Configure with Ansible
 
-The role lives in `ansible/roles/hostsfile_dyndns_updater`. See
-`ansible/playbooks/site.yml` for an example and `defaults/main.yml` for all
-variables.
+See [Add it to an existing Ansible playbook](#add-it-to-an-existing-ansible-playbook).
+For working on this repository, `ansible/playbooks/site.yml` is a complete example
+and `ansible/inventory.example.ini` an inventory:
 
 ```sh
 cd ansible
@@ -128,7 +241,7 @@ Responses follow DynDNS conventions: `good <ip>` (changed), `nochg <ip>`
 
 ## Releasing
 
-Bump `__version__`, commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The
+Bump `__version__` and `version` in `ansible/galaxy.yml`, commit, then `git tag vX.Y.Z && git push origin vX.Y.Z`. The
 `Build and release .deb` workflow builds the package, runs the install test on
 Ubuntu 22.04, 24.04 and 26.04, and publishes a GitHub release. Pushes to `main`
 and pull requests build and test without releasing.

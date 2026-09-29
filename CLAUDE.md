@@ -43,7 +43,12 @@ Ansible role. See `README.md` for the user-facing description.
   builds, install-tests and publishes them. The asset name
   `hostsfile-dyndns-updater_all.deb` is used by the README install command — keep it.
 - Bump `__version__` in `src/hostsfile_dyndns_updater/__init__.py` for releases;
-  the .deb version is derived from it.
+  the .deb version is derived from it. `version` in `ansible/galaxy.yml` (the role is
+  published as the collection `clu_pei_dae.hostsfile_dyndns_updater`, installed from
+  git via `#/ansible`) must match; the release workflow checks both.
+- The README section "Add it to an existing Ansible playbook" is the entry point for
+  AI assistants integrating the tool elsewhere. Keep it accurate when role variables,
+  the CLI (`hash-password --stdin`) or install methods change.
 - Test data: use public addresses (e.g. `8.8.8.8`, `2606:4700::1`) — documentation
   ranges such as `203.0.113.0/24` count as private in Python and are rejected.
 - README and code comments are in English. Do not add dependencies without a strong

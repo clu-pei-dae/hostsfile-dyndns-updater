@@ -17,12 +17,17 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("-c", "--config", default=config.DEFAULT_CONFIG)
     check = sub.add_parser("check-config", help="validate the configuration file")
     check.add_argument("-c", "--config", default=config.DEFAULT_CONFIG)
-    sub.add_parser("hash-password", help="print a password hash for config.ini")
+    hasher = sub.add_parser("hash-password", help="print a password hash for config.ini")
+    hasher.add_argument("--stdin", action="store_true",
+                        help="read the password from stdin (for automation) instead of prompting")
     args = parser.parse_args(argv)
 
     if args.command == "hash-password":
-        pw = getpass.getpass("Password: ")
-        if pw != getpass.getpass("Repeat: "):
+        if args.stdin:
+            pw = sys.stdin.readline().rstrip("\n")
+        else:
+            pw = getpass.getpass("Password: ")
+        if not args.stdin and pw != getpass.getpass("Repeat: "):
             print("passwords differ", file=sys.stderr)
             return 1
         if len(pw) < 16:
