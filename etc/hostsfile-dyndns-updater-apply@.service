@@ -1,0 +1,41 @@
+[Unit]
+Description=hostsfile-dyndns-updater: apply one update to /etc/hosts
+Documentation=https://github.com/clu-pei-dae/hostsfile-dyndns-updater
+
+[Service]
+# Root, but without any capability: it can only write files owned by root that
+# the sandbox leaves writable, i.e. /etc/hosts and the request log. The request
+# (one JSON line on the socket) is validated again against config.ini.
+ExecStart=/usr/bin/hostsfile-dyndns-updater apply
+StandardInput=socket
+StandardOutput=socket
+StandardError=journal
+RuntimeMaxSec=30
+
+CapabilityBoundingSet=
+AmbientCapabilities=
+NoNewPrivileges=yes
+ProtectSystem=strict
+# The file, not /etc: hosts.py then updates it in place instead of replacing it.
+ReadWritePaths=/etc/hosts /var/log/hostsfile-dyndns-updater
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+PrivateNetwork=yes
+ProtectProc=invisible
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0077

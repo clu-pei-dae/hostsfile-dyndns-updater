@@ -8,11 +8,14 @@ Ansible role. See `README.md` for the user-facing description.
 
 - `src/hostsfile_dyndns_updater/` — Python package, **standard library only**
   (must run on Ubuntu 22.04's Python 3.10 without pip). `hosts.py` edits the hosts
-  file, `server.py` is the HTTP handler (Unix socket), `config.py` loads
+  file, `server.py` is the unprivileged HTTP API (Unix socket), `apply.py` the root
+  helper that writes the hosts file plus its client, `config.py` loads
   `config.ini`, `passwords.py` hashes/verifies, `requestlog.py` writes the request
-  log, `cli.py` is the entry point.
+  log, `cli.py` is the entry point (`serve`, `apply`, `check-config`, `hash-password`).
 - `etc/` — defaults shipped in the package: `config.ini`, `nginx-site.conf`,
-  systemd unit, fail2ban filter and jail, logrotate configuration.
+  systemd units (API `.socket` + `.service` as user `hostsfile-dyndns`, helper
+  `-apply.socket` with `Accept=yes` + `-apply@.service` as root), fail2ban filter
+  and jail, logrotate configuration.
 - `packaging/` — `build-deb.sh` (plain `dpkg-deb`, no debhelper) and maintainer scripts.
 - `ansible/roles/hostsfile_dyndns_updater/` — role; its templates mirror `etc/`.
 - `tests/` — `unittest` tests, including a real Unix-socket server.
@@ -32,6 +35,21 @@ Ansible role. See `README.md` for the user-facing description.
   strings, credentials or password hashes; keep constant-time comparisons; reject
   rather than sanitize bad input. Any new request parameter needs strict
   validation and a test for the rejection path.
+- **Privilege separation.** The API service must stay unprivileged: it never gets
+  write access to the hosts file, capabilities, or network access; everything
+  that writes the hosts file goes through the root helper. The helper stays
+  minimal and trusts nothing it receives: it re-validates every field against
+  `config.ini` (hostname must be configured, addresses via `address_allowed`,
+  request id format) and logs only validated values. Do not add features to the
+  helper that the API could do unprivileged.
+- Every change of the hosts file is logged by both parts with the same
+  `request=` id (`APPLY` from the helper, `OK`/`ERROR` from the API); keep it that
+  way when touching either side, and keep `FAIL` lines unchanged for fail2ban.
+- Files both parts touch: `config.ini` and the request log are
+  `root:hostsfile-dyndns` (0640 / 0660) in a root-owned directory, so the API
+  cannot swap them for symlinks that root would then write through. Keep
+  `postinst`, the logrotate `create` line, the Ansible role and `install-test.sh`
+  consistent with that.
 - The request log format is an interface: the fail2ban filter
   (`etc/fail2ban-filter.conf`) parses it. Only write values the server produced or
   validated (never raw usernames, headers or query values), or clients can forge
@@ -42,8 +60,13 @@ Ansible role. See `README.md` for the user-facing description.
   (same for `etc/config.ini` and `templates/config.ini.j2`); new options must
   appear in the config loader, default config, Ansible defaults/template, README
   and tests.
-- Keep the systemd hardening in `etc/hostsfile-dyndns-updater.service`; loosen it
-  only with a documented reason. The service must still work with `ProtectSystem=strict`.
+- Keep the systemd hardening of all four units; loosen it only with a documented
+  reason. Both services must work with `ProtectSystem=strict`; the helper may
+  write only `/etc/hosts` (the file, not `/etc`) and the log directory, which is
+  why `hosts.py` falls back to an in-place update.
+- `tests/install-test.sh` emulates the socket units with `systemd-socket-activate`
+  and runs the API via `setpriv` as `hostsfile-dyndns`; when unit behaviour
+  changes, change the emulation too.
 - Conffiles must be listed in `packaging/debian/conffiles`; maintainer scripts must
   stay idempotent and pass `shellcheck`.
 - Releases are tags `vX.Y.Z` matching `__version__`; `.github/workflows/build-deb.yml`

@@ -24,6 +24,13 @@ def _family(address: str) -> int | None:
         return None
 
 
+def _same_address(field: str, wanted) -> bool:
+    try:
+        return ipaddress.ip_address(field) == wanted
+    except ValueError:
+        return False  # e.g. with a zone index; rewrite it
+
+
 def update_content(content: str, hostname: str, address: str) -> str:
     """Return `content` with `hostname` mapped to `address`.
 
@@ -50,9 +57,12 @@ def update_content(content: str, hostname: str, address: str) -> str:
                 continue
             if done:
                 continue  # duplicate mapping for the same hostname
+            done = True
+            if _same_address(fields[0], wanted):
+                out.append(line)  # already right: leave the line as the admin wrote it
+                continue
             tail = f"  {sep}{comment}" if sep else f"  {MARKER}"
             out.append(f"{address}\t{hostname}{tail}")
-            done = True
             continue
         out.append(line)
     if not done:
@@ -79,9 +89,21 @@ def update_hosts_file(path: str, hostname: str, address: str) -> bool:
 
 
 def _write(path: str, content: str) -> None:
+    """Replace the file atomically if the directory is writable, else in place.
+
+    The systemd unit of the root helper can write the hosts file only, not its
+    directory (and in containers /etc/hosts is a bind mount), so the in-place
+    path is the normal one in production.
+    """
+    try:
+        _write_atomic(path, content)
+    except OSError:
+        _write_in_place(path, content)
+
+
+def _write_atomic(path: str, content: str) -> None:
     st = os.stat(path)
-    directory = os.path.dirname(path) or "."
-    fd, tmp = tempfile.mkstemp(prefix=".hosts.", dir=directory)
+    fd, tmp = tempfile.mkstemp(prefix=".hosts.", dir=os.path.dirname(path) or ".")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(content)
@@ -91,15 +113,28 @@ def _write(path: str, content: str) -> None:
         try:
             os.chown(tmp, st.st_uid, st.st_gid)
         except PermissionError:
-            pass  # unprivileged run (tests); root always may
-        try:
-            os.replace(tmp, path)
-        except OSError:
-            # e.g. bind-mounted /etc/hosts in containers: rewrite in place
-            with open(path, "w", encoding="utf-8") as fh:
-                fh.write(content)
-            os.unlink(tmp)
+            pass  # unprivileged run (tests)
+        os.replace(tmp, path)
     except BaseException:
         if os.path.exists(tmp):
             os.unlink(tmp)
         raise
+
+
+def _write_in_place(path: str, content: str) -> None:
+    # Overwrite, then cut off the rest: readers never see an empty file.
+    data = content.encode("utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_NOFOLLOW)
+    try:
+        written = 0
+        while written < len(data):
+            written += os.pwrite(fd, data[written:], written)
+        os.ftruncate(fd, len(data))
+        os.fsync(fd)
+    finally:
+        os.close(fd)
+
+
+def pending_addresses(content: str, hostname: str, addresses: list[str]) -> list[str]:
+    """Addresses of `addresses` that are not yet mapped to `hostname` in `content`."""
+    return [a for a in addresses if update_content(content, hostname, a) != content]

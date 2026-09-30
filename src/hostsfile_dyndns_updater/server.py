@@ -1,20 +1,28 @@
-"""Local HTTP backend behind nginx (Unix socket). Implements GET /update."""
+"""Local HTTP backend behind nginx (Unix socket). Implements GET /update.
+
+Runs unprivileged. It authenticates and validates requests and decides from
+the (world-readable) hosts file whether anything changes; actual changes are
+written by the root helper (see apply.py) and reported back synchronously, so
+the FritzBox only gets "good" once the hosts file really was updated.
+"""
 
 import base64
 import binascii
 import functools
 import grp
 import ipaddress
+import json
 import logging
 import os
+import socket
 import socketserver
 import threading
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlsplit
 
-from . import passwords, requestlog
+from . import apply, passwords, requestlog
 from .config import Config, HostEntry, address_allowed
-from .hosts import update_hosts_file
+from .hosts import pending_addresses
 
 log = logging.getLogger("hostsfile-dyndns-updater")
 
@@ -39,6 +47,8 @@ class Request:
         self.host: str | None = None
         self.addresses: list[str] = []
         self.changed = False
+        self.request_id: str | None = None  # set when the hosts file is to be changed
+        self.detail: str | None = None  # why an ERROR happened (server-generated token)
 
 
 class Rejected(Exception):
@@ -46,6 +56,10 @@ class Rejected(Exception):
         super().__init__(message)
         self.status = status
         self.message = message
+
+
+class ApplyFailed(Exception):
+    """The hosts file could not be updated; answered with 911."""
 
 
 def _first(query: dict[str, list[str]], *keys: str) -> str | None:
@@ -127,12 +141,31 @@ def handle_update(config: Config, headers, target: str, peer: str | None,
         raise Rejected(403, "nohost")
     addresses = parse_addresses(config, query, peer)
     req.addresses = addresses
-    changed = False
     with _lock:
-        for address in addresses:
-            changed |= update_hosts_file(config.hosts_file, entry.hostname, address)
-    req.changed = changed
-    return f"{'good' if changed else 'nochg'} {' '.join(addresses)}"
+        with open(config.hosts_file, encoding="utf-8") as fh:
+            current = fh.read()
+        if pending_addresses(current, entry.hostname, addresses):
+            req.request_id = apply.new_request_id()
+            req.changed = _apply(config, req) == "good"
+    return f"{'good' if req.changed else 'nochg'} {' '.join(addresses)}"
+
+
+def _apply(config: Config, req: Request) -> str:
+    """Have the hosts file updated; return "good" or "nochg" or raise ApplyFailed."""
+    if config.apply_socket:
+        try:
+            reply = apply.request(config.apply_socket, req.request_id, req.host, req.addresses)
+        except apply.Unavailable as exc:
+            log.error("root helper at %s: %s", config.apply_socket, exc)
+            req.detail = "apply-unavailable"
+            raise ApplyFailed() from None
+    else:  # everything in this process (running as root without the helper)
+        message = {"request": req.request_id, "host": req.host, "addresses": req.addresses}
+        reply = apply.handle(config, json.dumps(message).encode())
+    if reply["result"] == "error":
+        req.detail = f"apply-{reply['reason']}"
+        raise ApplyFailed()
+    return reply["result"]
 
 
 def make_handler(config: Config):
@@ -158,13 +191,17 @@ def make_handler(config: Config):
                 body = handle_update(config, self.headers, self.path, peer, req)
             except Rejected as exc:
                 status, body = exc.status, exc.message
+            except ApplyFailed:
+                status, body = 500, "911"
             except Exception:  # never leak internals to the client
                 log.exception("internal error")
                 status, body = 500, "911"
+                req.detail = "internal"
             else:
                 status = 200
             result = body.split(" ", 1)[0]
-            requestlog.request(status, result, peer, req.user, req.host, req.addresses, req.changed)
+            requestlog.request(status, result, peer, req.user, req.host, req.addresses,
+                               req.changed, req.request_id, req.detail)
             self._respond(status, body)
 
         def _method_not_allowed(self):
@@ -182,13 +219,31 @@ def make_handler(config: Config):
     return Handler
 
 
+def systemd_listen_fd() -> int | None:
+    """The listening socket passed by systemd socket activation, if any."""
+    if os.environ.get("LISTEN_PID") != str(os.getpid()) or os.environ.get("LISTEN_FDS") != "1":
+        return None
+    for name in ("LISTEN_PID", "LISTEN_FDS", "LISTEN_FDNAMES"):
+        os.environ.pop(name, None)
+    return 3  # SD_LISTEN_FDS_START
+
+
 class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     daemon_threads = True
 
-    def __init__(self, config: Config):
+    def __init__(self, config: Config, listen_fd: int | None = None):
         self.config = config
         _dummy_hash(_max_iterations(config))
         requestlog.setup(config)
+        if listen_fd is not None:
+            # Socket created by systemd (owner, group and mode set in the .socket unit).
+            super().__init__(config.socket, make_handler(config), bind_and_activate=False)
+            self.socket.close()
+            self.socket = socket.socket(fileno=listen_fd)
+            if self.socket.family != socket.AF_UNIX or self.socket.type != socket.SOCK_STREAM:
+                raise SystemExit("socket from systemd is not a Unix stream socket")
+            self.server_address = self.socket.getsockname()
+            return
         path = config.socket
         if os.path.exists(path):
             os.unlink(path)

@@ -4,6 +4,14 @@
     name: hostsfile-dyndns-updater
     state: restarted
 
+- name: Restart hostsfile-dyndns-updater sockets
+  # Restarting the sockets stops the service bound to them; start it again.
+  ansible.builtin.shell: |
+    systemctl daemon-reload
+    systemctl restart hostsfile-dyndns-updater.socket hostsfile-dyndns-updater-apply.socket
+    systemctl restart hostsfile-dyndns-updater.service
+  changed_when: true
+
 - name: Reload fail2ban
   # Only if fail2ban runs; a failing configuration test aborts the play.
   ansible.builtin.shell: |

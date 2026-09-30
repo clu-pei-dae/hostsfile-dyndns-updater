@@ -2,6 +2,7 @@
 [server]
 socket = /run/hostsfile-dyndns-updater/api.sock
 socket_group = {{ hostsfile_dyndns_updater_socket_group }}
+apply_socket = /run/hostsfile-dyndns-updater/apply.sock
 hosts_file = {{ hostsfile_dyndns_updater_hosts_file }}
 allow_private_addresses = {{ 'yes' if hostsfile_dyndns_updater_allow_private_addresses else 'no' }}
 require_source_match = {{ 'yes' if hostsfile_dyndns_updater_require_source_match else 'no' }}

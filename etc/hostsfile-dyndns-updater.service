@@ -1,28 +1,32 @@
 [Unit]
-Description=DynDNS update endpoint backend (writes /etc/hosts)
+Description=DynDNS update endpoint for nginx (unprivileged API)
 Documentation=https://github.com/clu-pei-dae/hostsfile-dyndns-updater
-After=network.target
-Before=nginx.service
+# nginx connects to the socket from hostsfile-dyndns-updater.socket; changes to
+# the hosts file are written by the root helper behind hostsfile-dyndns-updater-apply.socket.
+Requires=hostsfile-dyndns-updater.socket
+Wants=hostsfile-dyndns-updater-apply.socket
+After=hostsfile-dyndns-updater.socket hostsfile-dyndns-updater-apply.socket
 
 [Service]
 Type=simple
-ExecStartPre=/usr/bin/hostsfile-dyndns-updater check-config
+User=hostsfile-dyndns
+Group=hostsfile-dyndns
 ExecStart=/usr/bin/hostsfile-dyndns-updater serve
 Restart=on-failure
 RestartSec=5
-RuntimeDirectory=hostsfile-dyndns-updater
-RuntimeDirectoryMode=0755
-LogsDirectory=hostsfile-dyndns-updater
-LogsDirectoryMode=0750
 
-# Runs as root (needed to replace /etc/hosts) but with everything else locked down.
-CapabilityBoundingSet=CAP_CHOWN
+# No privileges at all: reads config.ini (group hostsfile-dyndns) and /etc/hosts,
+# appends to the request log, talks to the two sockets. Nothing else.
+CapabilityBoundingSet=
+AmbientCapabilities=
 NoNewPrivileges=yes
 ProtectSystem=strict
-ReadWritePaths=/etc
+ReadWritePaths=/var/log/hostsfile-dyndns-updater
 ProtectHome=yes
 PrivateTmp=yes
 PrivateDevices=yes
+PrivateNetwork=yes
+ProtectProc=invisible
 ProtectKernelTunables=yes
 ProtectKernelModules=yes
 ProtectKernelLogs=yes
@@ -37,6 +41,7 @@ LockPersonality=yes
 MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
 SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
 UMask=0077
 
 [Install]

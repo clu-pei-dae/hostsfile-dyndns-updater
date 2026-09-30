@@ -16,14 +16,17 @@ install -d "$stage/DEBIAN" \
     "$stage/etc/fail2ban/filter.d" \
     "$stage/etc/fail2ban/jail.d" \
     "$stage/etc/logrotate.d"
-install -d -m 0700 "$stage/etc/hostsfile-dyndns-updater"
+install -d -m 0750 "$stage/etc/hostsfile-dyndns-updater"
 
 cp -r "$root/src/hostsfile_dyndns_updater" "$stage/usr/lib/python3/dist-packages/"
 find "$stage" -name __pycache__ -prune -exec rm -rf {} +
 printf '#!/bin/sh\nexec /usr/bin/python3 -m hostsfile_dyndns_updater "$@"\n' > "$stage/usr/bin/hostsfile-dyndns-updater"
 chmod 755 "$stage/usr/bin/hostsfile-dyndns-updater"
-install -m 0644 "$root/etc/hostsfile-dyndns-updater.service" "$stage/usr/lib/systemd/system/"
-install -m 0600 "$root/etc/config.ini" "$stage/etc/hostsfile-dyndns-updater/config.ini"
+for unit in hostsfile-dyndns-updater.service hostsfile-dyndns-updater.socket \
+            hostsfile-dyndns-updater-apply.socket hostsfile-dyndns-updater-apply@.service; do
+    install -m 0644 "$root/etc/$unit" "$stage/usr/lib/systemd/system/"
+done
+install -m 0640 "$root/etc/config.ini" "$stage/etc/hostsfile-dyndns-updater/config.ini"
 install -m 0644 "$root/etc/nginx-site.conf" "$stage/etc/nginx/sites-available/hostsfile-dyndns-updater"
 install -m 0644 "$root/etc/fail2ban-filter.conf" "$stage/etc/fail2ban/filter.d/hostsfile-dyndns-updater.conf"
 install -m 0644 "$root/etc/fail2ban-jail.conf" "$stage/etc/fail2ban/jail.d/hostsfile-dyndns-updater.conf"

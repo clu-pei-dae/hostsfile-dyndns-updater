@@ -1,13 +1,15 @@
 import base64
 import http.client
 import os
+import re
 import socket
+import socketserver
 import tempfile
 import threading
 import unittest
 
-from hostsfile_dyndns_updater import config, passwords
-from hostsfile_dyndns_updater.server import Server
+from hostsfile_dyndns_updater import apply, config, passwords
+from hostsfile_dyndns_updater.server import Server, systemd_listen_fd
 
 PASSWORD = "correct horse battery staple"
 
@@ -22,10 +24,31 @@ class UnixConn(http.client.HTTPConnection):
         self.sock.connect(self._path)
 
 
+class FakeApplySocket(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
+    """Stands in for hostsfile-dyndns-updater-apply.socket (Accept=yes): one
+    helper run per connection, connection as its stdin/stdout."""
+
+    daemon_threads = True
+
+    def __init__(self, path, cfg):
+        class Handler(socketserver.StreamRequestHandler):
+            def handle(self):
+                apply.serve_stream(cfg, self.rfile, self.wfile)
+
+        super().__init__(path, Handler)
+        threading.Thread(target=self.serve_forever, daemon=True).start()
+
+    def stop(self):
+        self.shutdown()
+        self.server_close()
+        os.unlink(self.server_address)
+
+
 class ServerTest(unittest.TestCase):
     query_creds = False
     source_match = False
     log_level = "changes"
+    split = True  # API and root helper as separate parts, as in production
 
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
@@ -34,6 +57,7 @@ class ServerTest(unittest.TestCase):
         with open(self.hosts, "w") as fh:
             fh.write("127.0.0.1 localhost\n")
         self.sock = os.path.join(d, "api.sock")
+        self.apply_sock = os.path.join(d, "apply.sock")
         self.log = os.path.join(d, "requests.log")
         ini = os.path.join(d, "config.ini")
         h = passwords.hash_password(PASSWORD, passwords.MIN_ITERATIONS)
@@ -46,18 +70,23 @@ allow_query_credentials = {self.query_creds}
 require_source_match = {self.source_match}
 log_file = {self.log}
 log_level = {self.log_level}
+apply_socket = {self.apply_sock if self.split else ""}
 
 [host home]
 hostname = home.example.org
 username = fritz
 password_hash = {h}
 """)
-        self.server = Server(config.load(ini))
+        self.cfg = config.load(ini)
+        self.helper = FakeApplySocket(self.apply_sock, self.cfg) if self.split else None
+        self.server = Server(self.cfg)
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
 
     def tearDown(self):
         self.server.shutdown()
         self.server.server_close()
+        if self.helper and os.path.exists(self.apply_sock):
+            self.helper.stop()
         self.dir.cleanup()
 
     def get(self, path, user="fritz", pw=PASSWORD, method="GET", headers=None):
@@ -79,6 +108,14 @@ password_hash = {h}
         with open(self.log) as fh:
             # drop the timestamp
             return [line.split(" ", 1)[1].rstrip("\n") for line in fh]
+
+    def log_lines_without_ids(self):
+        """Log lines with request ids replaced by ID; asserts ids pair up APPLY and OK/ERROR."""
+        lines = self.log_lines()
+        ids = [m.group(1) for m in (re.search(r" request=([0-9a-f]{16})", line) for line in lines) if m]
+        for rid in set(ids):
+            self.assertEqual(ids.count(rid), 2, f"request {rid} not logged by both parts")
+        return [re.sub(r"request=[0-9a-f]{16}", "request=ID", line) for line in lines]
 
 
 class BasicTest(ServerTest):
@@ -146,8 +183,9 @@ class RequestLogTest(ServerTest):
         self.get("/update?ipv4=8.8.8.7", user="guess", headers={"X-Real-IP": "1.2.3.4"})
         self.get("/update?ipv4=192.168.1.1", headers={"X-Real-IP": "9.9.9.9"})
         self.get("/update?ipv4=8.8.8.7", method="HEAD", headers={"X-Real-IP": "1.2.3.5"})
-        self.assertEqual(self.log_lines(), [
-            "OK status=200 result=good client=9.9.9.9 user=fritz host=home.example.org addr=8.8.8.7",
+        self.assertEqual(self.log_lines_without_ids(), [
+            "APPLY result=good host=home.example.org addr=8.8.8.7 request=ID",
+            "OK status=200 result=good client=9.9.9.9 user=fritz host=home.example.org addr=8.8.8.7 request=ID",
             "FAIL status=401 result=badauth client=1.2.3.4 user=-",
             "FAIL status=401 result=badauth client=1.2.3.4 user=-",  # unknown user not echoed
             "FAIL status=400 result=badip client=9.9.9.9 user=fritz host=home.example.org",
@@ -172,7 +210,87 @@ class RequestLogAllTest(ServerTest):
         self.get("/update?ipv4=8.8.8.7")
         self.get("/update?ipv4=8.8.8.7")
         self.assertEqual([line.split(" ", 3)[:3] for line in self.log_lines()],
-                         [["OK", "status=200", "result=good"], ["OK", "status=200", "result=nochg"]])
+                         [["APPLY", "result=good", "host=home.example.org"],
+                          ["OK", "status=200", "result=good"], ["OK", "status=200", "result=nochg"]])
+
+
+class SplitTest(ServerTest):
+    def test_unchanged_address_does_not_start_the_helper(self):
+        self.assertEqual(self.get("/update?ipv4=8.8.8.7")[0], 200)
+        self.helper.stop()
+        self.assertEqual(self.get("/update?ipv4=8.8.8.7"), (200, "nochg 8.8.8.7"))
+
+    def test_unreachable_helper_is_a_server_error(self):
+        self.helper.stop()
+        self.assertEqual(self.get("/update?ipv4=8.8.8.7", headers={"X-Real-IP": "9.9.9.9"}),
+                         (500, "911"))
+        self.assertEqual(self.hosts_text(), "127.0.0.1 localhost\n")
+        line = self.log_lines()[-1]
+        self.assertRegex(line, r"^ERROR status=500 result=911 client=9\.9\.9\.9 user=fritz "
+                               r"host=home\.example\.org addr=8\.8\.8\.7 request=[0-9a-f]{16} "
+                               r"detail=apply-unavailable$")
+
+    def test_failed_write_is_logged_by_both_parts(self):
+        from unittest import mock
+        with mock.patch.object(apply, "update_hosts_file", side_effect=PermissionError("denied")):
+            self.assertEqual(self.get("/update?ipv4=8.8.8.7")[0], 500)
+        self.assertEqual(self.log_lines_without_ids(), [
+            "APPLY result=error host=home.example.org addr=8.8.8.7 reason=writefailed request=ID",
+            "ERROR status=500 result=911 client=- user=fritz host=home.example.org addr=8.8.8.7 "
+            "request=ID detail=apply-writefailed",
+        ])
+
+
+class RaceTest(ServerTest):
+    def test_helper_nochg_is_still_paired_in_the_log(self):
+        # Another request applied the address between the API's check and the helper.
+        from unittest import mock
+
+        from hostsfile_dyndns_updater import server
+        self.get("/update?ipv4=8.8.8.7")
+        with mock.patch.object(server, "pending_addresses", return_value=["8.8.8.7"]):
+            self.assertEqual(self.get("/update?ipv4=8.8.8.7"), (200, "nochg 8.8.8.7"))
+        self.assertEqual([line.split(" ", 3)[:3] for line in self.log_lines_without_ids()], [
+            ["APPLY", "result=good", "host=home.example.org"],
+            ["OK", "status=200", "result=good"],
+            ["APPLY", "result=nochg", "host=home.example.org"],
+            ["OK", "status=200", "result=nochg"],
+        ])
+
+
+class InProcessTest(ServerTest):
+    split = False  # apply_socket empty: the API process writes the file itself
+
+    def test_update_without_helper(self):
+        self.assertEqual(self.get("/update?ipv4=8.8.8.7"), (200, "good 8.8.8.7"))
+        self.assertIn("8.8.8.7\thome.example.org", self.hosts_text())
+        self.assertEqual([line.split(" ", 1)[0] for line in self.log_lines_without_ids()],
+                         ["APPLY", "OK"])
+
+
+class SocketActivationTest(ServerTest):
+    def setUp(self):
+        super().setUp()
+        # Replace the self-bound server by one using an inherited, pre-bound socket.
+        self.server.shutdown()
+        self.server.server_close()
+        os.unlink(self.sock)
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(self.sock)
+        listener.listen()
+        self.server = Server(self.cfg, listen_fd=listener.detach())
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def test_serves_on_inherited_socket(self):
+        self.assertEqual(self.get("/update?ipv4=8.8.8.7"), (200, "good 8.8.8.7"))
+
+    def test_listen_fd_only_for_this_process(self):
+        from unittest import mock
+        with mock.patch.dict(os.environ, {"LISTEN_PID": "1", "LISTEN_FDS": "1"}):
+            self.assertIsNone(systemd_listen_fd())
+        with mock.patch.dict(os.environ, {"LISTEN_PID": str(os.getpid()), "LISTEN_FDS": "1"}):
+            self.assertEqual(systemd_listen_fd(), 3)
+            self.assertNotIn("LISTEN_FDS", os.environ)
 
 
 class UnknownUserTimingTest(unittest.TestCase):

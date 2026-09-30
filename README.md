@@ -6,16 +6,23 @@ into `/etc/hosts` of a Linux host. Useful when you want a hostname such as
 running a DNS server.
 
 ```
-FritzBox --HTTPS GET /update?...--> nginx (TLS, rate limit) --unix socket--> backend --> /etc/hosts
+FritzBox --HTTPS GET /update--> nginx --api.sock--> API service ----apply.sock----> root helper --> /etc/hosts
+                                (TLS,               (user hostsfile-dyndns,         (started per change,
+                                 rate limit)         no privileges)                  writes only /etc/hosts)
 ```
 
 * **nginx** terminates TLS (1.2/1.3), rate-limits, allows only `GET /update`, and
   never logs the query string.
-* The **backend** (Python 3, standard library only) authenticates the request,
-  validates the input and edits `/etc/hosts` atomically. It listens on a Unix
-  socket only, so it is unreachable from the network.
-* Shipped as a **.deb** package for Ubuntu (systemd unit, nginx site, default
-  config) and configurable with an **Ansible** role.
+* The **API service** (Python 3, standard library only) authenticates the
+  request and validates the input. It runs as the unprivileged system user
+  `hostsfile-dyndns` without any capability and cannot write `/etc/hosts`.
+* For an actual change it hands a one-line request to the **root helper**, which
+  systemd starts only for that change. The helper checks the request again
+  against the configuration, updates `/etc/hosts` and answers; the FritzBox gets
+  `good` only after the file was really written. Both parts log the change with a
+  common request id.
+* Shipped as a **.deb** package for Ubuntu (systemd units, nginx site, default
+  config, fail2ban jail, logrotate) and configurable with an **Ansible** role.
 
 ## Add it to an existing Ansible playbook
 
@@ -31,8 +38,9 @@ Role name: `clu_pei_dae.hostsfile_dyndns_updater.hostsfile_dyndns_updater`.
 the .deb (downloaded from the GitHub release and verified against its
 `SHA256SUMS`), installs `nginx` as a dependency, writes
 `/etc/hostsfile-dyndns-updater/config.ini` and the nginx site
-`/etc/nginx/sites-available/hostsfile-dyndns-updater`, and starts the service.
-The tool then edits `/etc/hosts` on that host. It does **not** obtain TLS
+`/etc/nginx/sites-available/hostsfile-dyndns-updater`, and starts the sockets and
+the service (the package creates the system user `hostsfile-dyndns`). The tool
+then edits `/etc/hosts` on that host. It does **not** obtain TLS
 certificates and does not touch other nginx sites.
 
 ### 1. Inspect the existing project
@@ -59,12 +67,12 @@ entries; pin a release tag, see the
 collections:
   - name: git+https://github.com/clu-pei-dae/hostsfile-dyndns-updater.git#/ansible
     type: git
-    version: v0.2.0
+    version: v1.0.0
 ```
 
 Then run `ansible-galaxy collection install -r requirements.yml`. If the project
 has no `requirements.yml` convention, install once with
-`ansible-galaxy collection install "git+https://github.com/clu-pei-dae/hostsfile-dyndns-updater.git#/ansible,v0.2.0"`.
+`ansible-galaxy collection install "git+https://github.com/clu-pei-dae/hostsfile-dyndns-updater.git#/ansible,v1.0.0"`.
 
 ### 3. Create the credentials
 
@@ -95,7 +103,7 @@ Add it to the play of the target hosts (adapt group, vars location and names):
   roles:
     - role: clu_pei_dae.hostsfile_dyndns_updater.hostsfile_dyndns_updater
       vars:
-        hostsfile_dyndns_updater_github_release: v0.2.0   # same tag as in requirements.yml
+        hostsfile_dyndns_updater_github_release: v1.0.0   # same tag as in requirements.yml
         hostsfile_dyndns_updater_server_name: dyndns.example.org
         hostsfile_dyndns_updater_tls_certificate: /etc/letsencrypt/live/dyndns.example.org/fullchain.pem
         hostsfile_dyndns_updater_tls_certificate_key: /etc/letsencrypt/live/dyndns.example.org/privkey.pem
@@ -118,7 +126,8 @@ leave them out unless the user asks.
 * `ansible-playbook --syntax-check <playbook>`, then a run with `--check --diff`
   if the project uses it (the package download/install steps report changes on a
   first run).
-* After a real run, on the target: `systemctl is-active hostsfile-dyndns-updater nginx`.
+* After a real run, on the target:
+  `systemctl is-active hostsfile-dyndns-updater.socket hostsfile-dyndns-updater-apply.socket hostsfile-dyndns-updater nginx`.
 * From anywhere, with the real password:
   `curl -u fritzbox:"$password" "https://dyndns.example.org/update?ipv4=<a public IPv4>&domain=home.example.org"`
   must answer `good <ip>` (first time) or `nochg <ip>`; a wrong password gives
@@ -137,9 +146,9 @@ re-running the playbook upgrades the tool when the pinned release is changed.
 | --- | --- |
 | Confidentiality / integrity in transit | HTTPS only (TLS 1.2+, HSTS). The FritzBox validates the server certificate, so use a real certificate (e.g. Let's Encrypt). |
 | Authenticity of the sender | Per-host username and password, sent via HTTP Basic auth. Passwords are stored as PBKDF2-HMAC-SHA256 hashes (600k iterations) and compared in constant time; unknown users cost the same PBKDF2 work as wrong passwords, so usernames cannot be probed. |
-| Integrity of `/etc/hosts` | Hostnames are fixed in the configuration, never taken from the request (an optional `domain` parameter must match). Addresses are parsed with `ipaddress`; loopback, link-local, multicast, reserved and (by default) private addresses are rejected. The file is replaced atomically under a lock, mode and owner are preserved. |
+| Integrity of `/etc/hosts` | Hostnames are fixed in the configuration, never taken from the request (an optional `domain` parameter must match). Addresses are parsed with `ipaddress`; loopback, link-local, multicast, reserved and (by default) private addresses are rejected. The root helper repeats all checks against the configuration before writing. Writes happen under a lock and never leave the file empty (see [`/etc/hosts` semantics](#etchosts-semantics)). |
 | Abuse | fail2ban jail (if fail2ban is installed) bans sources with 5 rejected requests in 10 minutes for 1 hour; nginx `limit_req` (6 requests/min per source, burst 5), optional `allow`/`deny` by source network, optional `require_source_match` (announced address must equal the connecting address; requests without a known source are rejected), method and size limits. |
-| Blast radius | The backend runs under a hardened systemd unit (no new privileges, `ProtectSystem=strict` with only `/etc` and its log directory writable, syscall filter, only `AF_UNIX`, only `CAP_CHOWN`). |
+| Blast radius | Privilege separation. The network-facing API service runs as user `hostsfile-dyndns` with no capabilities and no network access of its own (`PrivateNetwork=yes`); it can write only the request log. The root helper is started per change, reads one JSON line of at most 4 KiB, has no capabilities either and may write only the file `/etc/hosts` and the request log (`ProtectSystem=strict`, `ReadWritePaths=/etc/hosts`). Only the API's group may connect to the helper's socket. Both units: no new privileges, syscall filter, only `AF_UNIX`. |
 
 ## Installation (Ubuntu 22.04 / 24.04 / 26.04)
 
@@ -161,15 +170,20 @@ make deb                                  # or: packaging/build-deb.sh
 sudo apt install ./dist/hostsfile-dyndns-updater_*_all.deb
 ```
 
-The package depends on `nginx` and `ssl-cert`. It installs:
+The package depends on `nginx`, `ssl-cert` and `adduser`. It creates the system
+user and group `hostsfile-dyndns` (kept on purge, as usual for Debian packages)
+and installs:
 
 | File | Purpose |
 | --- | --- |
-| `/etc/hostsfile-dyndns-updater/config.ini` | Backend configuration (conffile, mode 0600) |
+| `/etc/hostsfile-dyndns-updater/config.ini` | Configuration (conffile, `root:hostsfile-dyndns` 0640: the API reads it through its group) |
 | `/etc/nginx/sites-available/hostsfile-dyndns-updater` | nginx site (conffile), enabled by symlink on first install |
-| `/usr/lib/systemd/system/hostsfile-dyndns-updater.service` | Backend service |
+| `/usr/lib/systemd/system/hostsfile-dyndns-updater.socket` | Socket nginx connects to (`/run/hostsfile-dyndns-updater/api.sock`, group `www-data`) |
+| `/usr/lib/systemd/system/hostsfile-dyndns-updater.service` | API service, user `hostsfile-dyndns` |
+| `/usr/lib/systemd/system/hostsfile-dyndns-updater-apply.socket` | Socket of the root helper (`/run/hostsfile-dyndns-updater/apply.sock`, group `hostsfile-dyndns`) |
+| `/usr/lib/systemd/system/hostsfile-dyndns-updater-apply@.service` | Root helper, one instance per change |
 | `/usr/bin/hostsfile-dyndns-updater` | CLI |
-| `/var/log/hostsfile-dyndns-updater/requests.log` | Request log (created by `postinst`) |
+| `/var/log/hostsfile-dyndns-updater/requests.log` | Request log (created by `postinst`, `root:hostsfile-dyndns` 0660) |
 | `/etc/fail2ban/filter.d/hostsfile-dyndns-updater.conf`, `/etc/fail2ban/jail.d/hostsfile-dyndns-updater.conf` | fail2ban filter and jail (conffiles; used only if fail2ban is installed) |
 | `/etc/logrotate.d/hostsfile-dyndns-updater` | logrotate configuration (conffile; used only if logrotate is installed) |
 
@@ -193,7 +207,12 @@ password_hash = pbkdf2_sha256$600000$...$...
 ```
 
 Then `sudo hostsfile-dyndns-updater check-config && sudo systemctl restart hostsfile-dyndns-updater`.
-All `[server]` options are documented in the shipped `config.ini`.
+All `[server]` options are documented in the shipped `config.ini`. Keep the file
+readable for the service (`root:hostsfile-dyndns`, mode 0640); `sudoedit` does.
+
+To maintain a file other than `/etc/hosts` (`hosts_file`), allow the helper to
+write it: `sudo systemctl edit hostsfile-dyndns-updater-apply@.service` and add
+`[Service]` / `ReadWritePaths=/path/to/file` (the Ansible role does this itself).
 
 ### Configure with Ansible
 
@@ -211,7 +230,7 @@ host and verifies it against the release's `SHA256SUMS`. Re-running the playbook
 `latest`), a different .deb (`file`) or a newer apt version (`apt`) is available;
 otherwise nothing changes and the service is not restarted. Key variables:
 `hostsfile_dyndns_updater_install_method` (`github`, `file` or `apt`),
-`..._github_release` (`latest` or a tag like `v0.2.0`; pin it for reproducible
+`..._github_release` (`latest` or a tag like `v1.0.0`; pin it for reproducible
 deployments), `..._deb_src` (for `file`: a .deb on the controller),
 `..._server_name`, `..._tls_certificate(_key)`, `..._nginx_allow`, `..._hosts`
 (list of `name`, `hostname`, `username`, `password_hash`). Keep the hashes in
@@ -220,8 +239,20 @@ Ansible Vault.
 ## Updating an existing installation
 
 Configuration survives updates: `config.ini` and the nginx site are conffiles.
-After the package is replaced, its `postinst` restarts the backend (if the
-configuration is valid) and reloads nginx. `/etc/hosts` is not touched.
+After the package is replaced, its `postinst` restarts the sockets and the API
+service (if the configuration is valid) and reloads nginx. `/etc/hosts` is not
+touched.
+
+**Upgrading from 0.x to 1.0** switches from one root service to the split
+described above. The package does it on its own: it creates the user
+`hostsfile-dyndns`, gives `config.ini` and the request log to its group, stops
+the old service and starts the sockets. Nothing in `config.ini` has to change (the
+new `apply_socket` option has the right default). If you manage
+`/etc/hostsfile-dyndns-updater/config.ini` with other tools, keep it
+`root:hostsfile-dyndns` 0640, otherwise the API cannot read it. If you edited
+`/etc/logrotate.d/hostsfile-dyndns-updater`, dpkg keeps your version: change its
+`create` line to `create 0660 root hostsfile-dyndns`, otherwise the API cannot
+write the log after the next rotation (unedited files are replaced automatically).
 
 **Manual installation** (latest release):
 
@@ -251,7 +282,8 @@ Check the result:
 ```sh
 dpkg-query -W hostsfile-dyndns-updater      # installed version
 sudo hostsfile-dyndns-updater check-config
-systemctl is-active hostsfile-dyndns-updater nginx
+systemctl is-active hostsfile-dyndns-updater.socket hostsfile-dyndns-updater-apply.socket \
+  hostsfile-dyndns-updater nginx
 ```
 
 **Ansible:** the role rewrites both files on every run, so no `.dpkg-dist` merging
@@ -271,29 +303,42 @@ the repository.
 
 ## Request log, fail2ban and logrotate
 
-Every API request that reaches the backend is written to
-`/var/log/hostsfile-dyndns-updater/requests.log`, one line per request:
+Both parts write to `/var/log/hostsfile-dyndns-updater/requests.log`: the API
+service one line per request, the root helper one line per change of the hosts
+file. A change therefore always shows up twice, linked by the same `request` id,
+first from the helper (the file was written) and then from the API (the FritzBox
+was answered):
 
 ```
-2026-09-30T10:15:02+0200 OK status=200 result=good client=8.8.8.8 user=fritzbox host=home.example.org addr=8.8.8.8,2606:4700::1
+2026-09-30T10:15:02+0200 APPLY result=good host=home.example.org addr=8.8.8.8,2606:4700::1 request=5f0c9e1a7d3b2c64
+2026-09-30T10:15:02+0200 OK status=200 result=good client=8.8.8.8 user=fritzbox host=home.example.org addr=8.8.8.8,2606:4700::1 request=5f0c9e1a7d3b2c64
 2026-09-30T11:15:03+0200 OK status=200 result=nochg client=8.8.8.8 user=fritzbox host=home.example.org addr=8.8.8.8
 2026-09-30T10:16:40+0200 FAIL status=401 result=badauth client=198.51.100.4 user=-
 2026-09-30T10:17:12+0200 FAIL status=400 result=badip client=8.8.8.8 user=fritzbox host=home.example.org
+2026-09-30T12:00:01+0200 APPLY result=error host=home.example.org addr=8.8.4.4 reason=writefailed request=0b7d51e9c2a4f318
+2026-09-30T12:00:01+0200 ERROR status=500 result=911 client=8.8.8.8 user=fritzbox host=home.example.org addr=8.8.4.4 request=0b7d51e9c2a4f318 detail=apply-writefailed
 ```
 
-* `OK`: accepted request. `result=good` means the address changed, `result=nochg`
-  means it was already set. `addr` lists the announced addresses.
-* `FAIL`: rejected request. `result` is the reason (`badauth` wrong or missing
-  credentials, `badip` invalid or forbidden address, `nohost` wrong `domain`,
-  `notfound` wrong path, `badmethod`, `toolong`).
-* `ERROR`: internal error (details are in the journal: `journalctl -u hostsfile-dyndns-updater`).
+* `APPLY` (root helper): `result=good` the file was changed, `result=nochg` it
+  already had these addresses, `result=error` with a `reason`: `writefailed`
+  (details in `journalctl -u 'hostsfile-dyndns-updater-apply@*'`), or `badhost`,
+  `badip`, `badrequest` for a request the helper refused.
+* `OK` (API): accepted request. `result=good` means the address changed,
+  `result=nochg` means it was already set (the helper is not involved then, so
+  there is no `request` id). `addr` lists the announced addresses.
+* `FAIL` (API): rejected request. `result` is the reason (`badauth` wrong or
+  missing credentials, `badip` invalid or forbidden address, `nohost` wrong
+  `domain`, `notfound` wrong path, `badmethod`, `toolong`).
+* `ERROR` (API): the FritzBox got `911`. `detail` says why: `apply-unavailable`
+  (helper not reachable), `apply-<reason>` (helper refused or failed), `internal`
+  (see `journalctl -u hostsfile-dyndns-updater`).
 * `client` is the address nginx saw. `user` is shown only after successful
   authentication; attempted usernames and passwords are never logged.
 
 What is logged is set by `log_level` in `config.ini` (Ansible:
 `hostsfile_dyndns_updater_log_level`):
 
-| `log_level` | `OK` lines | `FAIL` / `ERROR` lines |
+| `log_level` | `OK` lines | `APPLY` / `FAIL` / `ERROR` lines |
 | --- | --- | --- |
 | `changes` (default) | only `result=good` (address changed) | always |
 | `all` | every accepted request, including `nochg` | always |
@@ -325,8 +370,8 @@ on the target; see the `hostsfile_dyndns_updater_fail2ban_*` variables in the
 [role defaults](ansible/roles/hostsfile_dyndns_updater/defaults/main.yml).
 
 **logrotate.** If logrotate is installed (a recommended dependency), the log is
-rotated weekly and 8 compressed weeks are kept. The backend reopens the log after
-rotation by itself; no restart is needed.
+rotated weekly and 8 compressed weeks are kept. Both parts reopen the log after
+rotation by themselves; no restart is needed.
 
 ## FRITZ!Box setup
 
@@ -352,7 +397,12 @@ Responses follow DynDNS conventions: `good <ip>` (changed), `nochg <ip>`
   are kept). If other names share the line, the hostname is removed from it and a
   new line is appended. Otherwise a line marked
   `# managed by hostsfile-dyndns-updater` is appended.
-* Unchanged addresses do not rewrite the file. `::` (no IPv6) is ignored.
+* Unchanged addresses do not rewrite the file (and do not start the root
+  helper). `::` (no IPv6) is ignored.
+* The helper may write the file but not `/etc`, so it updates the file in place:
+  it overwrites the content and then cuts off the rest, so readers never see an
+  empty file. Where the directory is writable (e.g. running without systemd), the
+  file is replaced atomically instead.
 
 ## Releasing
 
@@ -369,8 +419,12 @@ make lint      # shellcheck for packaging scripts, ansible syntax check if avail
 make deb       # build dist/*.deb
 ```
 
-Run the backend locally: `PYTHONPATH=src python3 -m hostsfile_dyndns_updater serve -c my.ini`
-(with `socket_group =` empty and `hosts_file` pointing to a scratch file).
+Run the backend locally in one process: `PYTHONPATH=src python3 -m hostsfile_dyndns_updater serve -c my.ini`
+with `socket_group =` and `apply_socket =` empty and `hosts_file` pointing to a
+scratch file. The helper alone: `echo '{"request": "0123456789abcdef", "host":
+"home.example.org", "addresses": ["8.8.8.8"]}' | python3 -m hostsfile_dyndns_updater apply -c my.ini`.
+`tests/install-test.sh` shows how both parts run as under systemd (via
+`systemd-socket-activate` and `setpriv`).
 
 ## License
 
