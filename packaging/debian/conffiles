@@ -1,2 +1,5 @@
 /etc/hostsfile-dyndns-updater/config.ini
 /etc/nginx/sites-available/hostsfile-dyndns-updater
+/etc/fail2ban/filter.d/hostsfile-dyndns-updater.conf
+/etc/fail2ban/jail.d/hostsfile-dyndns-updater.conf
+/etc/logrotate.d/hostsfile-dyndns-updater

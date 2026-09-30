@@ -25,6 +25,7 @@ class UnixConn(http.client.HTTPConnection):
 class ServerTest(unittest.TestCase):
     query_creds = False
     source_match = False
+    log_level = "changes"
 
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()
@@ -33,6 +34,7 @@ class ServerTest(unittest.TestCase):
         with open(self.hosts, "w") as fh:
             fh.write("127.0.0.1 localhost\n")
         self.sock = os.path.join(d, "api.sock")
+        self.log = os.path.join(d, "requests.log")
         ini = os.path.join(d, "config.ini")
         h = passwords.hash_password(PASSWORD, passwords.MIN_ITERATIONS)
         with open(ini, "w") as fh:
@@ -42,6 +44,8 @@ socket_group =
 hosts_file = {self.hosts}
 allow_query_credentials = {self.query_creds}
 require_source_match = {self.source_match}
+log_file = {self.log}
+log_level = {self.log_level}
 
 [host home]
 hostname = home.example.org
@@ -70,6 +74,11 @@ password_hash = {h}
     def hosts_text(self):
         with open(self.hosts) as fh:
             return fh.read()
+
+    def log_lines(self):
+        with open(self.log) as fh:
+            # drop the timestamp
+            return [line.split(" ", 1)[1].rstrip("\n") for line in fh]
 
 
 class BasicTest(ServerTest):
@@ -126,6 +135,44 @@ class SourceMatchTest(ServerTest):
 
     def test_missing_peer_is_rejected(self):
         self.assertEqual(self.get("/update?ipv4=8.8.8.7")[0], 403)
+
+
+class RequestLogTest(ServerTest):
+    def test_changes_level_logs_changes_and_failures_only(self):
+        self.get("/update?ipv4=8.8.8.7&domain=home.example.org",
+                 headers={"X-Real-IP": "9.9.9.9"})
+        self.get("/update?ipv4=8.8.8.7", headers={"X-Real-IP": "9.9.9.9"})  # nochg
+        self.get("/update?ipv4=8.8.8.7", pw="wrong", headers={"X-Real-IP": "1.2.3.4"})
+        self.get("/update?ipv4=8.8.8.7", user="guess", headers={"X-Real-IP": "1.2.3.4"})
+        self.get("/update?ipv4=192.168.1.1", headers={"X-Real-IP": "9.9.9.9"})
+        self.get("/update?ipv4=8.8.8.7", method="HEAD", headers={"X-Real-IP": "1.2.3.5"})
+        self.assertEqual(self.log_lines(), [
+            "OK status=200 result=good client=9.9.9.9 user=fritz host=home.example.org addr=8.8.8.7",
+            "FAIL status=401 result=badauth client=1.2.3.4 user=-",
+            "FAIL status=401 result=badauth client=1.2.3.4 user=-",  # unknown user not echoed
+            "FAIL status=400 result=badip client=9.9.9.9 user=fritz host=home.example.org",
+            "FAIL status=405 result=badmethod client=1.2.3.5 user=-",
+        ])
+
+    def test_client_field_cannot_be_forged(self):
+        self.get("/update?ipv4=8.8.8.7", pw="x", headers={"X-Real-IP": "1.2.3.4 FAIL client=5.6.7.8"})
+        self.assertEqual(self.log_lines(), ["FAIL status=401 result=badauth client=- user=-"])
+
+    def test_log_is_reopened_after_rotation(self):
+        self.get("/update?ipv4=8.8.8.7", pw="x")
+        os.rename(self.log, self.log + ".1")
+        self.get("/update?ipv4=8.8.8.8", pw="x")
+        self.assertEqual(len(self.log_lines()), 1)
+
+
+class RequestLogAllTest(ServerTest):
+    log_level = "all"
+
+    def test_all_level_logs_unchanged_requests(self):
+        self.get("/update?ipv4=8.8.8.7")
+        self.get("/update?ipv4=8.8.8.7")
+        self.assertEqual([line.split(" ", 3)[:3] for line in self.log_lines()],
+                         [["OK", "status=200", "result=good"], ["OK", "status=200", "result=nochg"]])
 
 
 class UnknownUserTimingTest(unittest.TestCase):

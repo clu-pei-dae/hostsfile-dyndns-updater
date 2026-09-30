@@ -18,7 +18,8 @@ class ConfigTest(unittest.TestCase):
         for text in ("[server]\n",
                      "[host a]\nhostname=bad name\nusername=u\npassword_hash=%s\n" % h,
                      "[host a]\nhostname=a.example\nusername=u\npassword_hash=plain\n",
-                     "[host a]\nhostname=a.example\nusername=u\n"):
+                     "[host a]\nhostname=a.example\nusername=u\n",
+                     "[server]\nlog_level=verbose\n[host a]\nhostname=a.example\nusername=u\npassword_hash=%s\n" % h):
             with self.assertRaises(config.ConfigError, msg=text):
                 self.load(text)
 

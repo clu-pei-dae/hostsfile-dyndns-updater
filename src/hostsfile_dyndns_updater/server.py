@@ -12,7 +12,7 @@ import threading
 from http.server import BaseHTTPRequestHandler
 from urllib.parse import parse_qs, urlsplit
 
-from . import passwords
+from . import passwords, requestlog
 from .config import Config, HostEntry, address_allowed
 from .hosts import update_hosts_file
 
@@ -29,6 +29,16 @@ def _dummy_hash(iterations: int) -> str:
 
 def _max_iterations(config: Config) -> int:
     return max(passwords.parse_hash(e.password_hash)[0] for e in config.hosts.values())
+
+
+class Request:
+    """What the handler learned about a request, for the request log."""
+
+    def __init__(self):
+        self.user: str | None = None  # set only after successful authentication
+        self.host: str | None = None
+        self.addresses: list[str] = []
+        self.changed = False
 
 
 class Rejected(Exception):
@@ -103,21 +113,25 @@ def parse_addresses(config: Config, query, peer: str | None) -> list[str]:
 _lock = threading.Lock()
 
 
-def handle_update(config: Config, headers, target: str, peer: str | None) -> str:
+def handle_update(config: Config, headers, target: str, peer: str | None,
+                  req: Request | None = None) -> str:
+    req = req or Request()
     parts = urlsplit(target)
     if parts.path != "/update":
         raise Rejected(404, "notfound")
     query = parse_qs(parts.query, keep_blank_values=True)
     entry = authenticate(config, _credentials(headers, query, config.allow_query_credentials))
+    req.user, req.host = entry.username, entry.hostname
     domain = _first(query, "domain", "hostname")
     if domain and domain.lower() != entry.hostname:
         raise Rejected(403, "nohost")
     addresses = parse_addresses(config, query, peer)
+    req.addresses = addresses
     changed = False
     with _lock:
         for address in addresses:
             changed |= update_hosts_file(config.hosts_file, entry.hostname, address)
-    log.info("%s %s -> %s", "updated" if changed else "unchanged", entry.hostname, ",".join(addresses))
+    req.changed = changed
     return f"{'good' if changed else 'nochg'} {' '.join(addresses)}"
 
 
@@ -137,19 +151,24 @@ def make_handler(config: Config):
 
         def do_GET(self):  # noqa: N802
             peer = self.headers.get("X-Real-IP")
+            req = Request()
             try:
                 if len(self.path) > MAX_REQUEST_LINE:
                     raise Rejected(414, "toolong")
-                self._respond(200, handle_update(config, self.headers, self.path, peer))
+                body = handle_update(config, self.headers, self.path, peer, req)
             except Rejected as exc:
-                if exc.status in (401, 403):
-                    log.warning("rejected request from %s: %s", peer or "?", exc.message)
-                self._respond(exc.status, exc.message)
+                status, body = exc.status, exc.message
             except Exception:  # never leak internals to the client
                 log.exception("internal error")
-                self._respond(500, "911")
+                status, body = 500, "911"
+            else:
+                status = 200
+            result = body.split(" ", 1)[0]
+            requestlog.request(status, result, peer, req.user, req.host, req.addresses, req.changed)
+            self._respond(status, body)
 
         def _method_not_allowed(self):
+            requestlog.request(405, "badmethod", self.headers.get("X-Real-IP"))
             self.send_response(405)
             self.send_header("Allow", "GET")
             self.send_header("Content-Length", "0")
@@ -169,6 +188,7 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
     def __init__(self, config: Config):
         self.config = config
         _dummy_hash(_max_iterations(config))
+        requestlog.setup(config)
         path = config.socket
         if os.path.exists(path):
             os.unlink(path)

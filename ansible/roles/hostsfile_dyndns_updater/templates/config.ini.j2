@@ -6,6 +6,8 @@ hosts_file = {{ hostsfile_dyndns_updater_hosts_file }}
 allow_private_addresses = {{ 'yes' if hostsfile_dyndns_updater_allow_private_addresses else 'no' }}
 require_source_match = {{ 'yes' if hostsfile_dyndns_updater_require_source_match else 'no' }}
 allow_query_credentials = {{ 'yes' if hostsfile_dyndns_updater_allow_query_credentials else 'no' }}
+log_file = /var/log/hostsfile-dyndns-updater/requests.log
+log_level = {{ hostsfile_dyndns_updater_log_level }}
 {% for host in hostsfile_dyndns_updater_hosts %}
 
 [host {{ host.name }}]

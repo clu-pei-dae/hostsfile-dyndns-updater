@@ -5,7 +5,7 @@
 #   apt    - install "hostsfile-dyndns-updater" from a configured apt repository
 hostsfile_dyndns_updater_install_method: github
 
-# github: repository and release ("latest" or a tag such as "v0.1.1"). The download is
+# github: repository and release ("latest" or a tag such as "v0.2.0"). The download is
 # verified against the release's SHA256SUMS. With "latest", each run picks up new releases.
 hostsfile_dyndns_updater_github_repo: clu-pei-dae/hostsfile-dyndns-updater
 hostsfile_dyndns_updater_github_release: latest
@@ -32,6 +32,18 @@ hostsfile_dyndns_updater_hosts_file: /etc/hosts
 hostsfile_dyndns_updater_allow_private_addresses: false
 hostsfile_dyndns_updater_require_source_match: false
 hostsfile_dyndns_updater_allow_query_credentials: false
+# Request log /var/log/hostsfile-dyndns-updater/requests.log:
+#   changes - only requests that changed an address (plus all rejected requests)
+#   all     - every request with its result (plus all rejected requests)
+hostsfile_dyndns_updater_log_level: changes
+
+# fail2ban jail on the request log. Only applied if fail2ban is installed on the target.
+hostsfile_dyndns_updater_fail2ban_enabled: true
+hostsfile_dyndns_updater_fail2ban_maxretry: 5
+hostsfile_dyndns_updater_fail2ban_findtime: 10m
+hostsfile_dyndns_updater_fail2ban_bantime: 1h
+# Never banned, e.g. the FritzBox' address or your ISP's range. Localhost is always added.
+hostsfile_dyndns_updater_fail2ban_ignoreip: []
 
 # Hostnames to maintain. Required. Create hashes with
 #   hostsfile-dyndns-updater hash-password

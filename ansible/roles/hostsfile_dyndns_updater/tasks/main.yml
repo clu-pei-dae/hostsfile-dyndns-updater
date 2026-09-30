@@ -6,6 +6,12 @@
       - hostsfile_dyndns_updater_hosts | map(attribute='password_hash') | select('match', '^pbkdf2_sha256[$]') | list | length == hostsfile_dyndns_updater_hosts | length
     fail_msg: hostsfile_dyndns_updater_hosts must list at least one host and every entry needs a pbkdf2_sha256 password_hash
 
+- name: Validate log level
+  ansible.builtin.assert:
+    that:
+      - hostsfile_dyndns_updater_log_level in ['all', 'changes']
+    fail_msg: hostsfile_dyndns_updater_log_level must be "all" or "changes"
+
 - name: Validate install method
   ansible.builtin.assert:
     that:
@@ -89,3 +95,18 @@
     enabled: true
     state: started
     daemon_reload: true
+
+- name: Check whether fail2ban is installed
+  ansible.builtin.stat:
+    path: /etc/fail2ban/jail.d
+  register: hostsfile_dyndns_updater_fail2ban_dir
+
+- name: Configure fail2ban jail
+  ansible.builtin.template:
+    src: fail2ban-jail.conf.j2
+    dest: /etc/fail2ban/jail.d/hostsfile-dyndns-updater.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: hostsfile_dyndns_updater_fail2ban_dir.stat.exists
+  notify: Reload fail2ban

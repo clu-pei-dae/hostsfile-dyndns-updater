@@ -1,7 +1,7 @@
 ---
 namespace: clu_pei_dae
 name: hostsfile_dyndns_updater
-version: 0.1.1
+version: 0.2.0
 readme: ../README.md
 authors:
   - hostsfile-dyndns-updater maintainers

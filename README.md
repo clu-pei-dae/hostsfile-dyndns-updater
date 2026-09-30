@@ -59,12 +59,12 @@ entries; pin a release tag, see the
 collections:
   - name: git+https://github.com/clu-pei-dae/hostsfile-dyndns-updater.git#/ansible
     type: git
-    version: v0.1.1
+    version: v0.2.0
 ```
 
 Then run `ansible-galaxy collection install -r requirements.yml`. If the project
 has no `requirements.yml` convention, install once with
-`ansible-galaxy collection install "git+https://github.com/clu-pei-dae/hostsfile-dyndns-updater.git#/ansible,v0.1.1"`.
+`ansible-galaxy collection install "git+https://github.com/clu-pei-dae/hostsfile-dyndns-updater.git#/ansible,v0.2.0"`.
 
 ### 3. Create the credentials
 
@@ -95,7 +95,7 @@ Add it to the play of the target hosts (adapt group, vars location and names):
   roles:
     - role: clu_pei_dae.hostsfile_dyndns_updater.hostsfile_dyndns_updater
       vars:
-        hostsfile_dyndns_updater_github_release: v0.1.1   # same tag as in requirements.yml
+        hostsfile_dyndns_updater_github_release: v0.2.0   # same tag as in requirements.yml
         hostsfile_dyndns_updater_server_name: dyndns.example.org
         hostsfile_dyndns_updater_tls_certificate: /etc/letsencrypt/live/dyndns.example.org/fullchain.pem
         hostsfile_dyndns_updater_tls_certificate_key: /etc/letsencrypt/live/dyndns.example.org/privkey.pem
@@ -108,7 +108,8 @@ Add it to the play of the target hosts (adapt group, vars location and names):
 
 If the play already runs roles or tasks that create the certificate, place this
 role after them. Optional variables (source restriction `..._nginx_allow`,
-rate limit, `..._listen_port`, `..._listen_ipv6` (set `false` on hosts without IPv6), `..._require_source_match`, other install methods)
+rate limit, `..._log_level`, fail2ban settings `..._fail2ban_*` (the jail is set up
+automatically when fail2ban is installed on the target), `..._listen_port`, `..._listen_ipv6` (set `false` on hosts without IPv6), `..._require_source_match`, other install methods)
 are documented in the [role defaults](ansible/roles/hostsfile_dyndns_updater/defaults/main.yml);
 leave them out unless the user asks.
 
@@ -137,8 +138,8 @@ re-running the playbook upgrades the tool when the pinned release is changed.
 | Confidentiality / integrity in transit | HTTPS only (TLS 1.2+, HSTS). The FritzBox validates the server certificate, so use a real certificate (e.g. Let's Encrypt). |
 | Authenticity of the sender | Per-host username and password, sent via HTTP Basic auth. Passwords are stored as PBKDF2-HMAC-SHA256 hashes (600k iterations) and compared in constant time; unknown users cost the same PBKDF2 work as wrong passwords, so usernames cannot be probed. |
 | Integrity of `/etc/hosts` | Hostnames are fixed in the configuration, never taken from the request (an optional `domain` parameter must match). Addresses are parsed with `ipaddress`; loopback, link-local, multicast, reserved and (by default) private addresses are rejected. The file is replaced atomically under a lock, mode and owner are preserved. |
-| Abuse | nginx `limit_req` (6 requests/min per source, burst 5), optional `allow`/`deny` by source network, optional `require_source_match` (announced address must equal the connecting address; requests without a known source are rejected), method and size limits. |
-| Blast radius | The backend runs under a hardened systemd unit (no new privileges, `ProtectSystem=strict` with only `/etc` writable, syscall filter, only `AF_UNIX`, only `CAP_CHOWN`). |
+| Abuse | fail2ban jail (if fail2ban is installed) bans sources with 5 rejected requests in 10 minutes for 1 hour; nginx `limit_req` (6 requests/min per source, burst 5), optional `allow`/`deny` by source network, optional `require_source_match` (announced address must equal the connecting address; requests without a known source are rejected), method and size limits. |
+| Blast radius | The backend runs under a hardened systemd unit (no new privileges, `ProtectSystem=strict` with only `/etc` and its log directory writable, syscall filter, only `AF_UNIX`, only `CAP_CHOWN`). |
 
 ## Installation (Ubuntu 22.04 / 24.04 / 26.04)
 
@@ -168,6 +169,9 @@ The package depends on `nginx` and `ssl-cert`. It installs:
 | `/etc/nginx/sites-available/hostsfile-dyndns-updater` | nginx site (conffile), enabled by symlink on first install |
 | `/usr/lib/systemd/system/hostsfile-dyndns-updater.service` | Backend service |
 | `/usr/bin/hostsfile-dyndns-updater` | CLI |
+| `/var/log/hostsfile-dyndns-updater/requests.log` | Request log (created by `postinst`) |
+| `/etc/fail2ban/filter.d/hostsfile-dyndns-updater.conf`, `/etc/fail2ban/jail.d/hostsfile-dyndns-updater.conf` | fail2ban filter and jail (conffiles; used only if fail2ban is installed) |
+| `/etc/logrotate.d/hostsfile-dyndns-updater` | logrotate configuration (conffile; used only if logrotate is installed) |
 
 The default nginx site listens on 443 with the snake-oil certificate so that
 nginx starts out of the box. **Replace it with a trusted certificate and set
@@ -207,7 +211,7 @@ host and verifies it against the release's `SHA256SUMS`. Re-running the playbook
 `latest`), a different .deb (`file`) or a newer apt version (`apt`) is available;
 otherwise nothing changes and the service is not restarted. Key variables:
 `hostsfile_dyndns_updater_install_method` (`github`, `file` or `apt`),
-`..._github_release` (`latest` or a tag like `v0.1.1`; pin it for reproducible
+`..._github_release` (`latest` or a tag like `v0.2.0`; pin it for reproducible
 deployments), `..._deb_src` (for `file`: a .deb on the controller),
 `..._server_name`, `..._tls_certificate(_key)`, `..._nginx_allow`, `..._hosts`
 (list of `name`, `hostname`, `username`, `password_hash`). Keep the hashes in
@@ -264,6 +268,65 @@ alone is enough. With `install_method: apt`, it upgrades to the newest version i
 the repository.
 
 **Self-built package:** `sudo apt-get install <same options as above> ./dist/hostsfile-dyndns-updater_<version>_all.deb`.
+
+## Request log, fail2ban and logrotate
+
+Every API request that reaches the backend is written to
+`/var/log/hostsfile-dyndns-updater/requests.log`, one line per request:
+
+```
+2026-09-30T10:15:02+0200 OK status=200 result=good client=8.8.8.8 user=fritzbox host=home.example.org addr=8.8.8.8,2606:4700::1
+2026-09-30T11:15:03+0200 OK status=200 result=nochg client=8.8.8.8 user=fritzbox host=home.example.org addr=8.8.8.8
+2026-09-30T10:16:40+0200 FAIL status=401 result=badauth client=198.51.100.4 user=-
+2026-09-30T10:17:12+0200 FAIL status=400 result=badip client=8.8.8.8 user=fritzbox host=home.example.org
+```
+
+* `OK`: accepted request. `result=good` means the address changed, `result=nochg`
+  means it was already set. `addr` lists the announced addresses.
+* `FAIL`: rejected request. `result` is the reason (`badauth` wrong or missing
+  credentials, `badip` invalid or forbidden address, `nohost` wrong `domain`,
+  `notfound` wrong path, `badmethod`, `toolong`).
+* `ERROR`: internal error (details are in the journal: `journalctl -u hostsfile-dyndns-updater`).
+* `client` is the address nginx saw. `user` is shown only after successful
+  authentication; attempted usernames and passwords are never logged.
+
+What is logged is set by `log_level` in `config.ini` (Ansible:
+`hostsfile_dyndns_updater_log_level`):
+
+| `log_level` | `OK` lines | `FAIL` / `ERROR` lines |
+| --- | --- | --- |
+| `changes` (default) | only `result=good` (address changed) | always |
+| `all` | every accepted request, including `nochg` | always |
+
+Requests nginx rejects itself (rate limit, other paths, methods other than GET)
+never reach the backend; they are in nginx' access log
+`/var/log/nginx/hostsfile-dyndns-updater.access.log`.
+
+**fail2ban.** If fail2ban is installed (before or after this package), the jail
+`hostsfile-dyndns-updater` is active: a client with **5 `FAIL` lines within 10
+minutes is banned from HTTP/HTTPS for 1 hour**. That covers wrong passwords as well
+as other invalid requests. A FritzBox with a wrong password or a bad update URL is
+banned too, so add it to `ignoreip` if its address is static. Change the defaults in
+a `.local` file instead of editing the jail:
+
+```ini
+# /etc/fail2ban/jail.d/hostsfile-dyndns-updater.local
+[hostsfile-dyndns-updater]
+ignoreip = 127.0.0.1/8 ::1 84.1.2.0/24
+bantime  = 1d
+```
+
+Then `sudo fail2ban-client reload`. Useful commands:
+`sudo fail2ban-client status hostsfile-dyndns-updater` (banned addresses),
+`sudo fail2ban-client set hostsfile-dyndns-updater unbanip <ip>`, and
+`sudo fail2ban-regex /var/log/hostsfile-dyndns-updater/requests.log hostsfile-dyndns-updater`
+(test the filter). With Ansible, the role writes the jail when fail2ban is installed
+on the target; see the `hostsfile_dyndns_updater_fail2ban_*` variables in the
+[role defaults](ansible/roles/hostsfile_dyndns_updater/defaults/main.yml).
+
+**logrotate.** If logrotate is installed (a recommended dependency), the log is
+rotated weekly and 8 compressed weeks are kept. The backend reopens the log after
+rotation by itself; no restart is needed.
 
 ## FRITZ!Box setup
 
