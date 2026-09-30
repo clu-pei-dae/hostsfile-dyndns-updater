@@ -13,7 +13,7 @@ test -x /usr/bin/hostsfile-dyndns-updater
 test -L /etc/nginx/sites-enabled/hostsfile-dyndns-updater
 # Some sandboxes have no IPv6 at all; nginx cannot bind [::] there.
 if [ ! -e /proc/net/if_inet6 ]; then
-    sed -i '/listen \[::\]/d' /etc/nginx/sites-available/* /etc/nginx/sites-enabled/* 2>/dev/null || true
+    sed -i --follow-symlinks '/listen \[::\]/d' /etc/nginx/sites-available/* /etc/nginx/sites-enabled/* 2>/dev/null || true
 fi
 nginx -t
 # Unconfigured: the backend must refuse to start rather than run without hosts.

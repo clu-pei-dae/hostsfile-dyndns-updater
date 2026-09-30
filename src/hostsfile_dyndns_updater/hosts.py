@@ -13,7 +13,8 @@ HOSTNAME_RE = re.compile(
 
 
 def valid_hostname(name: str) -> bool:
-    return bool(HOSTNAME_RE.match(name))
+    # A numeric top-level label would make the name look like an IP address.
+    return bool(HOSTNAME_RE.match(name)) and not name.rsplit(".", 1)[-1].isdigit()
 
 
 def _family(address: str) -> int | None:
@@ -61,6 +62,7 @@ def update_content(content: str, hostname: str, address: str) -> str:
 
 def update_hosts_file(path: str, hostname: str, address: str) -> bool:
     """Update `path` atomically. Return True if the file changed."""
+    path = os.path.realpath(path)  # keep a symlinked hosts file a symlink
     # Lock the directory: the file itself is replaced, so it cannot hold the lock.
     lock_fd = os.open(os.path.dirname(path) or ".", os.O_RDONLY)
     try:

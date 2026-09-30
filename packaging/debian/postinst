@@ -5,10 +5,14 @@ if [ "$1" = configure ]; then
     chmod 0600 /etc/hostsfile-dyndns-updater/config.ini
     chmod 0700 /etc/hostsfile-dyndns-updater
 
+    # Enable the site on first install and after remove + reinstall, but not on
+    # upgrades (an admin may have disabled it on purpose).
     site=/etc/nginx/sites-enabled/hostsfile-dyndns-updater
-    if [ -d /etc/nginx/sites-enabled ] && [ ! -e "$site" ] && [ -z "$2" ]; then
+    marker=/var/lib/hostsfile-dyndns-updater/reenable-nginx-site
+    if [ -d /etc/nginx/sites-enabled ] && [ ! -e "$site" ] && { [ -z "$2" ] || [ -e "$marker" ]; }; then
         ln -s ../sites-available/hostsfile-dyndns-updater "$site"
     fi
+    rm -f "$marker"
 
     if [ -d /run/systemd/system ]; then
         systemctl daemon-reload || true

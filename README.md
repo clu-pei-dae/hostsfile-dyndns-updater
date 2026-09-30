@@ -59,12 +59,12 @@ entries; pin a release tag, see the
 collections:
   - name: git+https://github.com/clu-pei-dae/hostsfile-dyndns-updater.git#/ansible
     type: git
-    version: v0.1.0
+    version: v0.1.1
 ```
 
 Then run `ansible-galaxy collection install -r requirements.yml`. If the project
 has no `requirements.yml` convention, install once with
-`ansible-galaxy collection install "git+https://github.com/clu-pei-dae/hostsfile-dyndns-updater.git#/ansible,v0.1.0"`.
+`ansible-galaxy collection install "git+https://github.com/clu-pei-dae/hostsfile-dyndns-updater.git#/ansible,v0.1.1"`.
 
 ### 3. Create the credentials
 
@@ -95,7 +95,7 @@ Add it to the play of the target hosts (adapt group, vars location and names):
   roles:
     - role: clu_pei_dae.hostsfile_dyndns_updater.hostsfile_dyndns_updater
       vars:
-        hostsfile_dyndns_updater_github_release: v0.1.0   # same tag as in requirements.yml
+        hostsfile_dyndns_updater_github_release: v0.1.1   # same tag as in requirements.yml
         hostsfile_dyndns_updater_server_name: dyndns.example.org
         hostsfile_dyndns_updater_tls_certificate: /etc/letsencrypt/live/dyndns.example.org/fullchain.pem
         hostsfile_dyndns_updater_tls_certificate_key: /etc/letsencrypt/live/dyndns.example.org/privkey.pem
@@ -108,7 +108,7 @@ Add it to the play of the target hosts (adapt group, vars location and names):
 
 If the play already runs roles or tasks that create the certificate, place this
 role after them. Optional variables (source restriction `..._nginx_allow`,
-rate limit, `..._listen_port`, `..._require_source_match`, other install methods)
+rate limit, `..._listen_port`, `..._listen_ipv6` (set `false` on hosts without IPv6), `..._require_source_match`, other install methods)
 are documented in the [role defaults](ansible/roles/hostsfile_dyndns_updater/defaults/main.yml);
 leave them out unless the user asks.
 
@@ -135,9 +135,9 @@ re-running the playbook upgrades the tool when the pinned release is changed.
 | Property | Mechanism |
 | --- | --- |
 | Confidentiality / integrity in transit | HTTPS only (TLS 1.2+, HSTS). The FritzBox validates the server certificate, so use a real certificate (e.g. Let's Encrypt). |
-| Authenticity of the sender | Per-host username and password, sent via HTTP Basic auth. Passwords are stored as PBKDF2-HMAC-SHA256 hashes (600k iterations) and compared in constant time; unknown users cost the same time as wrong passwords. |
+| Authenticity of the sender | Per-host username and password, sent via HTTP Basic auth. Passwords are stored as PBKDF2-HMAC-SHA256 hashes (600k iterations) and compared in constant time; unknown users cost the same PBKDF2 work as wrong passwords, so usernames cannot be probed. |
 | Integrity of `/etc/hosts` | Hostnames are fixed in the configuration, never taken from the request (an optional `domain` parameter must match). Addresses are parsed with `ipaddress`; loopback, link-local, multicast, reserved and (by default) private addresses are rejected. The file is replaced atomically under a lock, mode and owner are preserved. |
-| Abuse | nginx `limit_req` (6 requests/min per source, burst 5), optional `allow`/`deny` by source network, optional `require_source_match` (announced address must equal the connecting address), method and size limits. |
+| Abuse | nginx `limit_req` (6 requests/min per source, burst 5), optional `allow`/`deny` by source network, optional `require_source_match` (announced address must equal the connecting address; requests without a known source are rejected), method and size limits. |
 | Blast radius | The backend runs under a hardened systemd unit (no new privileges, `ProtectSystem=strict` with only `/etc` writable, syscall filter, only `AF_UNIX`, only `CAP_CHOWN`). |
 
 ## Installation (Ubuntu 22.04 / 24.04 / 26.04)
@@ -207,11 +207,63 @@ host and verifies it against the release's `SHA256SUMS`. Re-running the playbook
 `latest`), a different .deb (`file`) or a newer apt version (`apt`) is available;
 otherwise nothing changes and the service is not restarted. Key variables:
 `hostsfile_dyndns_updater_install_method` (`github`, `file` or `apt`),
-`..._github_release` (`latest` or a tag like `v0.1.0`; pin it for reproducible
+`..._github_release` (`latest` or a tag like `v0.1.1`; pin it for reproducible
 deployments), `..._deb_src` (for `file`: a .deb on the controller),
 `..._server_name`, `..._tls_certificate(_key)`, `..._nginx_allow`, `..._hosts`
 (list of `name`, `hostname`, `username`, `password_hash`). Keep the hashes in
 Ansible Vault.
+
+## Updating an existing installation
+
+Configuration survives updates: `config.ini` and the nginx site are conffiles.
+After the package is replaced, its `postinst` restarts the backend (if the
+configuration is valid) and reloads nginx. `/etc/hosts` is not touched.
+
+**Manual installation** (latest release):
+
+```sh
+curl -fsSLo /tmp/hostsfile-dyndns-updater.deb \
+  https://github.com/clu-pei-dae/hostsfile-dyndns-updater/releases/latest/download/hostsfile-dyndns-updater_all.deb
+sudo apt-get install -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+  /tmp/hostsfile-dyndns-updater.deb
+```
+
+For a specific version replace `latest/download` with `download/vX.Y.Z`. To verify
+the download, fetch `SHA256SUMS` from the same release and run
+`sha256sum -c --ignore-missing SHA256SUMS` in the download directory.
+
+The `--force-conf*` options keep your edited `config.ini` and nginx site without
+an interactive prompt. If a release changes these defaults, the new versions are
+stored next to them as `*.dpkg-dist`; compare and merge them by hand if you want
+the changes, then delete them:
+
+```sh
+sudo diff /etc/hostsfile-dyndns-updater/config.ini{,.dpkg-dist}
+sudo diff /etc/nginx/sites-available/hostsfile-dyndns-updater{,.dpkg-dist}
+```
+
+Check the result:
+
+```sh
+dpkg-query -W hostsfile-dyndns-updater      # installed version
+sudo hostsfile-dyndns-updater check-config
+systemctl is-active hostsfile-dyndns-updater nginx
+```
+
+**Ansible:** the role rewrites both files on every run, so no `.dpkg-dist` merging
+is needed. Raise the tag in `requirements.yml` and in
+`hostsfile_dyndns_updater_github_release`, then run:
+
+```sh
+ansible-galaxy collection install -r requirements.yml --force   # role of the new version
+ansible-playbook <playbook>
+```
+
+With `hostsfile_dyndns_updater_github_release: latest`, re-running the playbook
+alone is enough. With `install_method: apt`, it upgrades to the newest version in
+the repository.
+
+**Self-built package:** `sudo apt-get install <same options as above> ./dist/hostsfile-dyndns-updater_<version>_all.deb`.
 
 ## FRITZ!Box setup
 

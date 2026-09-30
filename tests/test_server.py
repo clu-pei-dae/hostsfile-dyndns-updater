@@ -103,6 +103,7 @@ class BasicTest(ServerTest):
             self.assertEqual(self.get("/update?" + q)[0], status, q)
         self.assertEqual(self.get("/other")[0], 404)
         self.assertEqual(self.get("/update?ipv4=8.8.8.7", method="POST")[0], 405)
+        self.assertEqual(self.get("/update?ipv4=8.8.8.7", method="HEAD")[0], 405)
         self.assertEqual(self.hosts_text(), "127.0.0.1 localhost\n")
 
 
@@ -122,6 +123,29 @@ class SourceMatchTest(ServerTest):
                                   headers={"X-Real-IP": "8.8.8.99"})[0], 403)
         self.assertEqual(self.get("/update?ipv4=8.8.8.7",
                                   headers={"X-Real-IP": "8.8.8.7"})[0], 200)
+
+    def test_missing_peer_is_rejected(self):
+        self.assertEqual(self.get("/update?ipv4=8.8.8.7")[0], 403)
+
+
+class UnknownUserTimingTest(unittest.TestCase):
+    def test_unknown_user_costs_the_same_iterations(self):
+        from unittest import mock
+
+        from hostsfile_dyndns_updater import server
+        from hostsfile_dyndns_updater.config import Config, HostEntry
+
+        encoded = passwords.hash_password(PASSWORD, passwords.MIN_ITERATIONS + 1)
+        cfg = Config(hosts={"fritz": HostEntry("home", "home.example.org", "fritz", encoded)})
+        seen = []
+        real = passwords.verify_password
+        with mock.patch.object(server.passwords, "verify_password",
+                               side_effect=lambda pw, h: seen.append(h) or real(pw, h)):
+            for user in ("fritz", "nobody"):
+                with self.assertRaises(server.Rejected):
+                    server.authenticate(cfg, (user, "wrong"))
+        self.assertEqual([passwords.parse_hash(h)[0] for h in seen],
+                         [passwords.MIN_ITERATIONS + 1] * 2)
 
 
 if __name__ == "__main__":

@@ -5,7 +5,7 @@
 #   apt    - install "hostsfile-dyndns-updater" from a configured apt repository
 hostsfile_dyndns_updater_install_method: github
 
-# github: repository and release ("latest" or a tag such as "v0.1.0"). The download is
+# github: repository and release ("latest" or a tag such as "v0.1.1"). The download is
 # verified against the release's SHA256SUMS. With "latest", each run picks up new releases.
 hostsfile_dyndns_updater_github_repo: clu-pei-dae/hostsfile-dyndns-updater
 hostsfile_dyndns_updater_github_release: latest
@@ -16,6 +16,8 @@ hostsfile_dyndns_updater_deb_src: ""
 # nginx
 hostsfile_dyndns_updater_server_name: dyndns.example.org
 hostsfile_dyndns_updater_listen_port: 443
+# Also listen on IPv6. Disable on hosts without IPv6, nginx would not start.
+hostsfile_dyndns_updater_listen_ipv6: true
 # Certificate the FritzBox trusts (e.g. Let's Encrypt). Must already exist on the host.
 hostsfile_dyndns_updater_tls_certificate: /etc/ssl/certs/ssl-cert-snakeoil.pem
 hostsfile_dyndns_updater_tls_certificate_key: /etc/ssl/private/ssl-cert-snakeoil.key

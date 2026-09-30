@@ -2,6 +2,7 @@
 
 import base64
 import binascii
+import functools
 import grp
 import ipaddress
 import logging
@@ -18,8 +19,16 @@ from .hosts import update_hosts_file
 log = logging.getLogger("hostsfile-dyndns-updater")
 
 MAX_REQUEST_LINE = 2048
-# Verified against when the username is unknown, to keep timing uniform.
-_DUMMY_HASH = passwords.hash_password("dummy", passwords.MIN_ITERATIONS)
+
+
+@functools.lru_cache(maxsize=8)
+def _dummy_hash(iterations: int) -> str:
+    """Hash verified against for unknown usernames, so they cost as much as known ones."""
+    return passwords.hash_password("dummy", iterations)
+
+
+def _max_iterations(config: Config) -> int:
+    return max(passwords.parse_hash(e.password_hash)[0] for e in config.hosts.values())
 
 
 class Rejected(Exception):
@@ -55,7 +64,8 @@ def authenticate(config: Config, creds: tuple[str, str] | None) -> HostEntry:
     if creds is None:
         raise Rejected(401, "badauth")
     entry = config.hosts.get(creds[0])
-    ok = passwords.verify_password(creds[1], entry.password_hash if entry else _DUMMY_HASH)
+    encoded = entry.password_hash if entry else _dummy_hash(_max_iterations(config))
+    ok = passwords.verify_password(creds[1], encoded)
     if not (entry and ok):
         raise Rejected(401, "badauth")
     return entry
@@ -77,11 +87,11 @@ def parse_addresses(config: Config, query, peer: str | None) -> list[str]:
             continue  # FritzBox sends :: when it has no IPv6 address
         if not address_allowed(addr, config.allow_private_addresses):
             raise Rejected(400, "badip")
-        if config.require_source_match and peer:
+        if config.require_source_match:
             try:
-                peer_addr = ipaddress.ip_address(peer)
+                peer_addr = ipaddress.ip_address(peer or "")
             except ValueError:
-                raise Rejected(400, "badip") from None
+                raise Rejected(403, "badip") from None  # no trustworthy peer address
             if peer_addr.version == version and peer_addr != addr:
                 raise Rejected(403, "badip")
         result.append(str(addr))
@@ -145,7 +155,7 @@ def make_handler(config: Config):
             self.send_header("Content-Length", "0")
             self.end_headers()
 
-        do_POST = do_PUT = do_DELETE = do_PATCH = _method_not_allowed  # noqa: N815
+        do_HEAD = do_POST = do_PUT = do_DELETE = do_PATCH = _method_not_allowed  # noqa: N815
 
         def log_message(self, fmt, *args):  # request lines may hold secrets
             pass
@@ -158,6 +168,7 @@ class Server(socketserver.ThreadingMixIn, socketserver.UnixStreamServer):
 
     def __init__(self, config: Config):
         self.config = config
+        _dummy_hash(_max_iterations(config))
         path = config.socket
         if os.path.exists(path):
             os.unlink(path)

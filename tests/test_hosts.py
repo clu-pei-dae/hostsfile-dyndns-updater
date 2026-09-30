@@ -37,7 +37,7 @@ class UpdateContentTest(unittest.TestCase):
         self.assertEqual(hosts.update_content(out, "h.example.org", "203.0.113.7"), out)
 
     def test_hostname_validation(self):
-        for bad in ("", "a b", "a\nb", "-a.example", "a..b", "a_b", "x" * 300):
+        for bad in ("", "a b", "a\nb", "-a.example", "a..b", "a_b", "x" * 300, "8.8.8.8", "host.123"):
             self.assertFalse(hosts.valid_hostname(bad), bad)
         self.assertTrue(hosts.valid_hostname("home.example.org"))
 
@@ -53,6 +53,18 @@ class UpdateFileTest(unittest.TestCase):
             self.assertFalse(hosts.update_hosts_file(path, "h.example.org", "203.0.113.7"))
             self.assertEqual(os.stat(path).st_mode & 0o777, 0o640)
             self.assertEqual(os.listdir(d), ["hosts"])
+
+    def test_symlinked_file_stays_a_symlink(self):
+        with tempfile.TemporaryDirectory() as d:
+            target = os.path.join(d, "real-hosts")
+            with open(target, "w") as fh:
+                fh.write(BASE)
+            link = os.path.join(d, "hosts")
+            os.symlink(target, link)
+            self.assertTrue(hosts.update_hosts_file(link, "h.example.org", "203.0.113.7"))
+            self.assertTrue(os.path.islink(link))
+            with open(target) as fh:
+                self.assertIn("203.0.113.7\th.example.org", fh.read())
 
 
 if __name__ == "__main__":

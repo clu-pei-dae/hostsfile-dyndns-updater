@@ -77,6 +77,12 @@
     state: link
   notify: Reload nginx
 
+- name: Enable and start nginx
+  ansible.builtin.systemd:
+    name: nginx
+    enabled: true
+    state: started
+
 - name: Enable and start backend
   ansible.builtin.systemd:
     name: hostsfile-dyndns-updater
