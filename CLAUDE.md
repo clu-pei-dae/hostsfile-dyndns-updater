@@ -46,6 +46,8 @@ Ansible role. See `README.md` for the user-facing description.
   the .deb version is derived from it. `version` in `ansible/galaxy.yml` (the role is
   published as the collection `clu_pei_dae.hostsfile_dyndns_updater`, installed from
   git via `#/ansible`) must match; the release workflow checks both.
+- Changing `etc/config.ini` or `etc/nginx-site.conf` creates `*.dpkg-dist` files on
+  upgrades (see README "Updating an existing installation"); mention it in the release notes.
 - The README section "Add it to an existing Ansible playbook" is the entry point for
   AI assistants integrating the tool elsewhere. Keep it accurate when role variables,
   the CLI (`hash-password --stdin`) or install methods change.

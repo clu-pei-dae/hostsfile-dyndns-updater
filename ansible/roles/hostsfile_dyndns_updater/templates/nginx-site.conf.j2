@@ -5,11 +5,15 @@
 limit_req_zone $binary_remote_addr zone=hostsfile_dyndns:1m rate={{ hostsfile_dyndns_updater_rate_limit }};
 
 # Log the path only: the query string may carry addresses or credentials.
+# nginx still writes the full request line to its error log for rate-limited or
+# failed requests; that is why credentials in the URL are off by default.
 log_format hostsfile_dyndns '$remote_addr [$time_local] $request_method $uri $status $body_bytes_sent';
 
 server {
     listen {{ hostsfile_dyndns_updater_listen_port }} ssl;
+{% if hostsfile_dyndns_updater_listen_ipv6 %}
     listen [::]:{{ hostsfile_dyndns_updater_listen_port }} ssl;
+{% endif %}
     server_name {{ hostsfile_dyndns_updater_server_name }};
 
     ssl_certificate     {{ hostsfile_dyndns_updater_tls_certificate }};
