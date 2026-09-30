@@ -5,16 +5,19 @@ import getpass
 import logging
 import sys
 
-from . import __version__, config, passwords
-from .server import Server
+from . import __version__, apply, config, passwords, requestlog
+from .server import Server, systemd_listen_fd
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="hostsfile-dyndns-updater", description=__doc__)
     parser.add_argument("--version", action="version", version=__version__)
     sub = parser.add_subparsers(dest="command", required=True)
-    serve = sub.add_parser("serve", help="run the API backend (used by the systemd unit)")
+    serve = sub.add_parser("serve", help="run the API backend (unprivileged, used by the systemd unit)")
     serve.add_argument("-c", "--config", default=config.DEFAULT_CONFIG)
+    applier = sub.add_parser("apply", help="apply one update read from stdin (root helper, "
+                                           "started by systemd per connection)")
+    applier.add_argument("-c", "--config", default=config.DEFAULT_CONFIG)
     check = sub.add_parser("check-config", help="validate the configuration file")
     check.add_argument("-c", "--config", default=config.DEFAULT_CONFIG)
     hasher = sub.add_parser("hash-password", help="print a password hash for config.ini")
@@ -46,8 +49,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
-    server = Server(cfg)
-    logging.info("listening on %s", cfg.socket)
+    if args.command == "apply":
+        requestlog.setup(cfg, create=False)
+        apply.serve_stream(cfg, sys.stdin.buffer, sys.stdout.buffer)
+        return 0
+
+    listen_fd = systemd_listen_fd()
+    server = Server(cfg, listen_fd)
+    logging.info("listening on %s%s", cfg.socket, " (socket from systemd)" if listen_fd else "")
     try:
         server.serve_forever()
     except KeyboardInterrupt:

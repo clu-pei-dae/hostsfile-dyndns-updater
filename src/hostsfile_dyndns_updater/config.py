@@ -9,6 +9,7 @@
     allow_query_credentials = no
     log_file = /var/log/hostsfile-dyndns-updater/requests.log
     log_level = changes
+    apply_socket = /run/hostsfile-dyndns-updater/apply.sock
 
     [host home]
     hostname = home.example.org
@@ -25,6 +26,7 @@ from .hosts import valid_hostname
 
 DEFAULT_CONFIG = "/etc/hostsfile-dyndns-updater/config.ini"
 DEFAULT_LOG_FILE = "/var/log/hostsfile-dyndns-updater/requests.log"
+DEFAULT_APPLY_SOCKET = "/run/hostsfile-dyndns-updater/apply.sock"
 LOG_LEVELS = ("all", "changes")
 
 
@@ -50,6 +52,9 @@ class Config:
     allow_query_credentials: bool = False
     log_file: str = DEFAULT_LOG_FILE  # empty: request log goes to stderr (journal)
     log_level: str = "changes"  # "all" or "changes"; failed requests are always logged
+    # Root helper that writes hosts_file. Empty: the API process writes it itself
+    # (only for running everything as root, e.g. without systemd).
+    apply_socket: str = DEFAULT_APPLY_SOCKET
     hosts: dict[str, HostEntry] = field(default_factory=dict)  # keyed by username
 
 
@@ -114,8 +119,13 @@ def load(path: str = DEFAULT_CONFIG) -> Config:
         allow_query_credentials=boolean("allow_query_credentials", False),
         log_file=server.get("log_file", defaults.log_file).strip(),
         log_level=log_level,
+        apply_socket=server.get("apply_socket", defaults.apply_socket).strip(),
         hosts=hosts,
     )
+
+
+def hostnames(config: Config) -> set[str]:
+    return {entry.hostname for entry in config.hosts.values()}
 
 
 def address_allowed(address: ipaddress.IPv4Address | ipaddress.IPv6Address,

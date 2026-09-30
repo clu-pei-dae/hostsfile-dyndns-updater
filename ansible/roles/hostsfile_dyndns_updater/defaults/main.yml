@@ -5,7 +5,7 @@
 #   apt    - install "hostsfile-dyndns-updater" from a configured apt repository
 hostsfile_dyndns_updater_install_method: github
 
-# github: repository and release ("latest" or a tag such as "v0.2.0"). The download is
+# github: repository and release ("latest" or a tag such as "v1.0.0"). The download is
 # verified against the release's SHA256SUMS. With "latest", each run picks up new releases.
 hostsfile_dyndns_updater_github_repo: clu-pei-dae/hostsfile-dyndns-updater
 hostsfile_dyndns_updater_github_release: latest
@@ -27,7 +27,9 @@ hostsfile_dyndns_updater_rate_limit: 6r/m
 hostsfile_dyndns_updater_rate_burst: 5
 
 # backend ([server] section of config.ini)
+# Group that may connect to the API socket (the nginx workers); set in the socket unit.
 hostsfile_dyndns_updater_socket_group: www-data
+# File to maintain; the root helper's unit is allowed to write exactly this file.
 hostsfile_dyndns_updater_hosts_file: /etc/hosts
 hostsfile_dyndns_updater_allow_private_addresses: false
 hostsfile_dyndns_updater_require_source_match: false

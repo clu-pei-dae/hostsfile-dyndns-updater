@@ -3,7 +3,7 @@ Version: @VERSION@
 Section: net
 Priority: optional
 Architecture: all
-Depends: python3 (>= 3.10), nginx | nginx-light | nginx-full, ssl-cert
+Depends: python3 (>= 3.10), nginx | nginx-light | nginx-full, ssl-cert, adduser
 Recommends: logrotate
 Suggests: fail2ban
 Maintainer: hostsfile-dyndns-updater maintainers <root@localhost>

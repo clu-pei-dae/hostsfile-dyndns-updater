@@ -2,7 +2,8 @@
 set -e
 if [ "$1" = remove ] || [ "$1" = deconfigure ]; then
     if [ -d /run/systemd/system ]; then
-        systemctl disable --now hostsfile-dyndns-updater.service || true
+        systemctl disable --now hostsfile-dyndns-updater.service \
+            hostsfile-dyndns-updater.socket hostsfile-dyndns-updater-apply.socket || true
     fi
 fi
 exit 0

@@ -1,14 +1,29 @@
 #!/bin/sh
 set -e
 
-if [ "$1" = configure ]; then
-    chmod 0600 /etc/hostsfile-dyndns-updater/config.ini
-    chmod 0700 /etc/hostsfile-dyndns-updater
+user=hostsfile-dyndns
+units="hostsfile-dyndns-updater.socket hostsfile-dyndns-updater-apply.socket hostsfile-dyndns-updater.service"
 
-    # fail2ban refuses to start when a jail's log file is missing.
-    install -d -m 0750 /var/log/hostsfile-dyndns-updater
+if [ "$1" = configure ]; then
+    # The API service runs as this system user; only the helper that writes
+    # /etc/hosts runs as root.
+    if ! getent passwd "$user" >/dev/null; then
+        adduser --system --group --no-create-home --home /nonexistent --quiet "$user"
+    fi
+
+    # The API reads the configuration through its group.
+    chown root:"$user" /etc/hostsfile-dyndns-updater /etc/hostsfile-dyndns-updater/config.ini
+    chmod 0750 /etc/hostsfile-dyndns-updater
+    chmod 0640 /etc/hostsfile-dyndns-updater/config.ini
+
+    # Request log: written by both parts. The directory stays root's, so the
+    # unprivileged API cannot replace the file (e.g. by a symlink) that root
+    # appends to. fail2ban refuses to start when a jail's log file is missing.
+    install -d -m 0755 -o root -g root /var/log/hostsfile-dyndns-updater
     log=/var/log/hostsfile-dyndns-updater/requests.log
-    [ -e "$log" ] || install -m 0600 /dev/null "$log"
+    [ -e "$log" ] || install -m 0660 /dev/null "$log"
+    chown root:"$user" "$log"
+    chmod 0660 "$log"
 
     # Enable the site on first install and after remove + reinstall, but not on
     # upgrades (an admin may have disabled it on purpose).
@@ -21,10 +36,15 @@ if [ "$1" = configure ]; then
 
     if [ -d /run/systemd/system ]; then
         systemctl daemon-reload || true
-        systemctl enable hostsfile-dyndns-updater.service || true
+        # shellcheck disable=SC2086
+        systemctl enable $units || true
+        # Versions before 1.0 ran the whole backend as root with its own socket;
+        # stop it so that the socket units can take over the paths.
+        systemctl stop hostsfile-dyndns-updater.service || true
+        systemctl restart hostsfile-dyndns-updater-apply.socket hostsfile-dyndns-updater.socket || true
         # Only start once at least one host is configured.
         if hostsfile-dyndns-updater check-config >/dev/null 2>&1; then
-            systemctl restart hostsfile-dyndns-updater.service || true
+            systemctl start hostsfile-dyndns-updater.service || true
         else
             echo "hostsfile-dyndns-updater: not started, configure /etc/hostsfile-dyndns-updater/config.ini first." >&2
         fi

@@ -62,10 +62,46 @@
     src: config.ini.j2
     dest: /etc/hostsfile-dyndns-updater/config.ini
     owner: root
-    group: root
-    mode: "0600"
+    # The unprivileged API service reads it through its group.
+    group: hostsfile-dyndns
+    mode: "0640"
     validate: /usr/bin/hostsfile-dyndns-updater check-config -c %s
   notify: Restart hostsfile-dyndns-updater
+
+- name: Create systemd drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop:
+    - hostsfile-dyndns-updater.socket
+    - hostsfile-dyndns-updater-apply@.service
+
+- name: Set the group nginx connects with (socket unit)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/hostsfile-dyndns-updater.socket.d/ansible.conf
+    content: |
+      # {{ ansible_managed }}
+      [Socket]
+      SocketGroup={{ hostsfile_dyndns_updater_socket_group }}
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart hostsfile-dyndns-updater sockets
+
+- name: Let the root helper write the configured hosts file
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/hostsfile-dyndns-updater-apply@.service.d/ansible.conf
+    content: |
+      # {{ ansible_managed }}
+      [Service]
+      ReadWritePaths={{ hostsfile_dyndns_updater_hosts_file }}
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart hostsfile-dyndns-updater sockets
 
 - name: Configure nginx site
   ansible.builtin.template:
@@ -89,12 +125,16 @@
     enabled: true
     state: started
 
-- name: Enable and start backend
+- name: Enable and start sockets and backend
   ansible.builtin.systemd:
-    name: hostsfile-dyndns-updater
+    name: "{{ item }}"
     enabled: true
     state: started
     daemon_reload: true
+  loop:
+    - hostsfile-dyndns-updater.socket
+    - hostsfile-dyndns-updater-apply.socket
+    - hostsfile-dyndns-updater.service
 
 - name: Check whether fail2ban is installed
   ansible.builtin.stat:
