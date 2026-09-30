@@ -61,7 +61,10 @@ cat "$log"
 grep -q " OK status=200 result=good client=127.0.0.1 user=fritzbox host=home.example.org addr=8.8.8.8$" "$log"
 grep -q " FAIL status=401 result=badauth client=127.0.0.1 user=-$" "$log"
 
-# fail2ban: the jail's configuration is valid and its filter matches only the failure
+# fail2ban: the jail's configuration is valid and its filter matches only the failure.
+# The config test covers all jails; Ubuntu 22.04's default sshd jail reads
+# /var/log/auth.log, which syslog creates on real hosts but not in containers.
+touch /var/log/auth.log
 fail2ban-client -t
 fail2ban-regex "$log" hostsfile-dyndns-updater | tee /tmp/f2b.out
 grep -q "Lines: 2 lines, 0 ignored, 1 matched, 1 missed" /tmp/f2b.out
