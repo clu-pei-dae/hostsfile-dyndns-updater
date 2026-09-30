@@ -249,7 +249,10 @@ described above. The package does it on its own: it creates the user
 the old service and starts the sockets. Nothing in `config.ini` has to change (the
 new `apply_socket` option has the right default). If you manage
 `/etc/hostsfile-dyndns-updater/config.ini` with other tools, keep it
-`root:hostsfile-dyndns` 0640, otherwise the API cannot read it.
+`root:hostsfile-dyndns` 0640, otherwise the API cannot read it. If you edited
+`/etc/logrotate.d/hostsfile-dyndns-updater`, dpkg keeps your version: change its
+`create` line to `create 0660 root hostsfile-dyndns`, otherwise the API cannot
+write the log after the next rotation (unedited files are replaced automatically).
 
 **Manual installation** (latest release):
 
