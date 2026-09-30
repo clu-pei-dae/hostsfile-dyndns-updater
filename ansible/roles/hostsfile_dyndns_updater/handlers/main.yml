@@ -4,6 +4,14 @@
     name: hostsfile-dyndns-updater
     state: restarted
 
+- name: Reload fail2ban
+  # Only if fail2ban runs; a failing configuration test aborts the play.
+  ansible.builtin.shell: |
+    if systemctl is-active --quiet fail2ban; then
+      fail2ban-client -t && fail2ban-client reload
+    fi
+  changed_when: true
+
 - name: Reload nginx
   ansible.builtin.shell: nginx -t && systemctl reload nginx
   changed_when: true

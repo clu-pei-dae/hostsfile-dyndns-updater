@@ -20,7 +20,11 @@ case "$1" in
         ;;
 esac
 if [ "$1" = purge ]; then
-    rm -rf /etc/hostsfile-dyndns-updater /var/lib/hostsfile-dyndns-updater
+    rm -rf /etc/hostsfile-dyndns-updater /var/lib/hostsfile-dyndns-updater /var/log/hostsfile-dyndns-updater
     rm -f /var/log/nginx/hostsfile-dyndns-updater.access.log*
+    # dpkg has removed the jail (a conffile) by now.
+    if [ -d /run/systemd/system ] && systemctl is-active --quiet fail2ban; then
+        fail2ban-client reload >/dev/null 2>&1 || true
+    fi
 fi
 exit 0

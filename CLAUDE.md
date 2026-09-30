@@ -9,9 +9,10 @@ Ansible role. See `README.md` for the user-facing description.
 - `src/hostsfile_dyndns_updater/` — Python package, **standard library only**
   (must run on Ubuntu 22.04's Python 3.10 without pip). `hosts.py` edits the hosts
   file, `server.py` is the HTTP handler (Unix socket), `config.py` loads
-  `config.ini`, `passwords.py` hashes/verifies, `cli.py` is the entry point.
+  `config.ini`, `passwords.py` hashes/verifies, `requestlog.py` writes the request
+  log, `cli.py` is the entry point.
 - `etc/` — defaults shipped in the package: `config.ini`, `nginx-site.conf`,
-  systemd unit.
+  systemd unit, fail2ban filter and jail, logrotate configuration.
 - `packaging/` — `build-deb.sh` (plain `dpkg-deb`, no debhelper) and maintainer scripts.
 - `ansible/roles/hostsfile_dyndns_updater/` — role; its templates mirror `etc/`.
 - `tests/` — `unittest` tests, including a real Unix-socket server.
@@ -31,6 +32,12 @@ Ansible role. See `README.md` for the user-facing description.
   strings, credentials or password hashes; keep constant-time comparisons; reject
   rather than sanitize bad input. Any new request parameter needs strict
   validation and a test for the rejection path.
+- The request log format is an interface: the fail2ban filter
+  (`etc/fail2ban-filter.conf`) parses it. Only write values the server produced or
+  validated (never raw usernames, headers or query values), or clients can forge
+  lines that get others banned. Changing the format needs matching filter changes
+  and the `fail2ban-regex` check in `tests/install-test.sh`.
+- Keep `etc/fail2ban-jail.conf` and the role's `templates/fail2ban-jail.conf.j2` in sync.
 - Keep `etc/nginx-site.conf` and the role's `templates/nginx-site.conf.j2` in sync
   (same for `etc/config.ini` and `templates/config.ini.j2`); new options must
   appear in the config loader, default config, Ansible defaults/template, README

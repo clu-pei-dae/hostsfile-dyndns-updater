@@ -4,6 +4,8 @@ Section: net
 Priority: optional
 Architecture: all
 Depends: python3 (>= 3.10), nginx | nginx-light | nginx-full, ssl-cert
+Recommends: logrotate
+Suggests: fail2ban
 Maintainer: hostsfile-dyndns-updater maintainers <root@localhost>
 Homepage: https://github.com/clu-pei-dae/hostsfile-dyndns-updater
 Description: FritzBox DynDNS endpoint that maintains /etc/hosts

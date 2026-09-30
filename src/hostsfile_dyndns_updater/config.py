@@ -7,6 +7,8 @@
     allow_private_addresses = no
     require_source_match = no
     allow_query_credentials = no
+    log_file = /var/log/hostsfile-dyndns-updater/requests.log
+    log_level = changes
 
     [host home]
     hostname = home.example.org
@@ -22,6 +24,8 @@ from . import passwords
 from .hosts import valid_hostname
 
 DEFAULT_CONFIG = "/etc/hostsfile-dyndns-updater/config.ini"
+DEFAULT_LOG_FILE = "/var/log/hostsfile-dyndns-updater/requests.log"
+LOG_LEVELS = ("all", "changes")
 
 
 class ConfigError(Exception):
@@ -44,6 +48,8 @@ class Config:
     allow_private_addresses: bool = False
     require_source_match: bool = False
     allow_query_credentials: bool = False
+    log_file: str = DEFAULT_LOG_FILE  # empty: request log goes to stderr (journal)
+    log_level: str = "changes"  # "all" or "changes"; failed requests are always logged
     hosts: dict[str, HostEntry] = field(default_factory=dict)  # keyed by username
 
 
@@ -95,6 +101,10 @@ def load(path: str = DEFAULT_CONFIG) -> Config:
     if not hosts:
         raise ConfigError("no [host <name>] section configured")
 
+    log_level = server.get("log_level", defaults.log_level).strip().lower()
+    if log_level not in LOG_LEVELS:
+        raise ConfigError(f"[server] log_level must be one of {', '.join(LOG_LEVELS)}")
+
     return Config(
         socket=server.get("socket", defaults.socket),
         socket_group=server.get("socket_group", defaults.socket_group),
@@ -102,6 +112,8 @@ def load(path: str = DEFAULT_CONFIG) -> Config:
         allow_private_addresses=boolean("allow_private_addresses", False),
         require_source_match=boolean("require_source_match", False),
         allow_query_credentials=boolean("allow_query_credentials", False),
+        log_file=server.get("log_file", defaults.log_file).strip(),
+        log_level=log_level,
         hosts=hosts,
     )
 

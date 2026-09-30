@@ -12,6 +12,8 @@ Restart=on-failure
 RestartSec=5
 RuntimeDirectory=hostsfile-dyndns-updater
 RuntimeDirectoryMode=0755
+LogsDirectory=hostsfile-dyndns-updater
+LogsDirectoryMode=0750
 
 # Runs as root (needed to replace /etc/hosts) but with everything else locked down.
 CapabilityBoundingSet=CAP_CHOWN

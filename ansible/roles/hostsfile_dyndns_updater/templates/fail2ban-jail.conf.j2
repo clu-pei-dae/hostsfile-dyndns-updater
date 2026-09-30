@@ -1,0 +1,17 @@
+# {{ ansible_managed }}
+# fail2ban jail for hostsfile-dyndns-updater. Bans clients that send repeated
+# rejected requests (wrong password, invalid addresses, ...) from HTTP(S).
+
+[hostsfile-dyndns-updater]
+enabled  = {{ 'true' if hostsfile_dyndns_updater_fail2ban_enabled else 'false' }}
+# Ubuntu defaults to the systemd journal; this jail reads a log file.
+backend  = auto
+filter   = hostsfile-dyndns-updater
+logpath  = /var/log/hostsfile-dyndns-updater/requests.log
+port     = http,https
+maxretry = {{ hostsfile_dyndns_updater_fail2ban_maxretry }}
+findtime = {{ hostsfile_dyndns_updater_fail2ban_findtime }}
+bantime  = {{ hostsfile_dyndns_updater_fail2ban_bantime }}
+{% if hostsfile_dyndns_updater_fail2ban_ignoreip | length > 0 %}
+ignoreip = 127.0.0.1/8 ::1 {{ hostsfile_dyndns_updater_fail2ban_ignoreip | join(' ') }}
+{% endif %}
